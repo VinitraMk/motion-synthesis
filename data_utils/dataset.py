@@ -56,6 +56,7 @@ class MotionDatasetV2(data.Dataset):
 
         self.mean = mean
         self.std = std
+        print(f'Motion shape (N, T, D): ({len(self.data)}, {self.data[0].shape[0]}, {self.data[0].shape[1]})')
         print("Total number of motions {}, snippets {}".format(len(self.data), self.cumsum[-1]))
 
     def inv_transform(self, data):
