@@ -30,7 +30,7 @@ if __name__ == "__main__":
     os.makedirs(options.eval_dir, exist_ok=True)
     os.makedirs(options.log_dir, exist_ok=True)
 
-    options.data_root = './data/HumanML3D/HumanML3D'
+    options.data_root = './data/HumanML3D'
     options.motion_dir = pjoin(options.data_root, 'new_joint_vecs')
     options.text_dir = pjoin(options.data_root, 'texts')
     options.joints_num = 22
