@@ -3,3 +3,4 @@ data/
 checkpoints/
 *.pyc
 *.zip
+.ipynb_checkpoints/
