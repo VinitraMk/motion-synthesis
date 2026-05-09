@@ -6,20 +6,7 @@ from utils.paramUtils import t2m_kinematic_chain
 import numpy as np
 from utils.word_vectorizer import WordVectorizer
 from torch.utils.data import DataLoader
-from data_utils.dataset import MotionDatasetV2, PartMotionDatasetV2
-from networks.trainers import MotionVQVAETrainer
-from networks.nn import MotionVQVAE
-
-'''
-def plot_t2m(data, save_dir):
-    data = train_dataset.inv_transform(data)
-    for i in range(len(data)):
-        joint_data = data[i]
-        joint = recover_from_ric(torch.from_numpy(joint_data).float(), opt.joints_num).numpy()
-        save_path = pjoin(save_dir, '%02d.mp4'%(i))
-        plot_3d_motion(save_path, kinematic_chain, joint, title="None", fps=fps, radius=radius)
-'''
-
+from data_utils.dataset import MotionDatasetV2
 
 if __name__ == "__main__":
     print('Is cuda device: ', torch.cuda.is_available())
@@ -37,7 +24,6 @@ if __name__ == "__main__":
     options.meta_dir = pjoin(options.save_root, 'meta')
     options.eval_dir = pjoin(options.save_root, 'animation')
     options.log_dir = pjoin('./log', options.dataset_name, options.name)
-    options.experiment_dir = pjoin('./exp_results', 'vq-vae-setup')
 
     os.makedirs(options.model_dir, exist_ok=True)
     os.makedirs(options.meta_dir, exist_ok=True)
@@ -59,32 +45,13 @@ if __name__ == "__main__":
     std = np.load(pjoin(options.data_root, 'Std.npy'))
 
     w_vectorizer = WordVectorizer('./glove', 'our_vab')
-    train_split_file = pjoin(options.data_root, 'train_micro.txt')
-    val_split_file = pjoin(options.data_root, 'val_micro.txt')
+    train_split_file = pjoin(options.data_root, 'train.txt')
+    val_split_file = pjoin(options.data_root, 'val.txt')
 
-    train_dataset = PartMotionDatasetV2(options, mean, std, train_split_file)
-    val_dataset = PartMotionDatasetV2(options, mean, std, val_split_file)
-    sample_motion = train_dataset[0]
-    print('Sample data shape: ', sample_motion['motion_parts'].shape)
-    Dp_max = sample_motion['motion_parts'].shape[-1]
-
+    train_dataset = MotionDatasetV2(options, mean, std, train_split_file)
+    val_dataset = MotionDatasetV2(options, mean, std, val_split_file)
     train_loader = DataLoader(train_dataset, batch_size=options.batch_size, drop_last=True, num_workers=1,
                               shuffle=False, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=options.batch_size, drop_last=True, num_workers=1,
                             shuffle=False, pin_memory=True)
-    
-    vqvae = MotionVQVAE(
-        input_dim=Dp_max,
-        enc_hidden_dim=256,
-        dec_hidden_dim=256,
-        latent_dim=256,
-        num_embeddings=256,
-        beta=0.25
-    )
-    
-    trainer = MotionVQVAETrainer(options, vqvae = vqvae)
-    trainer.train(
-        train_dataloader=train_loader,
-        val_dataloader=val_loader)
-    
 
