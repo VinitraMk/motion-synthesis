@@ -14,9 +14,7 @@ class MovementConvEncoder(nn.Module):
             nn.Dropout(0.2, inplace=True),
             nn.LeakyReLU(0.2, inplace=True),
         )
-        self.out_net = nn.Linear(output_size, output_size)
         self.main.apply(init_weight)
-        self.out_net.apply(init_weight)
 
     def forward(self, inputs):
         # inputs - (B, T, P, Dp_max)

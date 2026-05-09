@@ -66,22 +66,22 @@ class MotionVQVAE(nn.Module):
     def forward(self, x):
         #x_p = x.permute(0, 2, 1, 3) # -> (B, P, T, Dp_max)
         z_e = self.encode(x) # -> (B, C_latent, T_latent, P)
-        z_q, indices, vq_loss, codebook_loss, commitment_loss = self.quantize(z_e)
-        x_recon = self.decode(z_q) # -> (B, T, P, Dp_max)
+        #z_q, indices, vq_loss, codebook_loss, commitment_loss = self.quantize(z_e)
+        x_recon = self.decode(z_e) # -> (B, T, P, Dp_max)
 
         recon_loss = F.l1_loss(x, x_recon)
-        loss = recon_loss + vq_loss
+        loss = recon_loss #+ vq_loss
 
         return {
             "x_recon": x_recon,
             "z_e": z_e,
-            "z_q": z_q,
-            "indices": indices,
+            "z_q": None,
+            "indices": None,
             "loss": loss,
             "recon_loss": recon_loss,
-            "vq_loss": vq_loss,
-            "codebook_loss": codebook_loss,
-            "commitment_loss": commitment_loss,
+            "vq_loss": torch.tensor(0),
+            "codebook_loss": torch.tensor(0),
+            "commitment_loss": torch.tensor(0),
         }
 
     @torch.no_grad()
