@@ -7,6 +7,9 @@ import numpy as np
 from utils.word_vectorizer import WordVectorizer
 from torch.utils.data import DataLoader
 from data_utils.dataset import MotionDatasetV2
+from data_utils.dataset import PartMotionDatasetV2
+from networks.nn import MotionVQVAE
+from networks.trainers import MotionVQVAETrainer
 
 if __name__ == "__main__":
     print('Is cuda device: ', torch.cuda.is_available())
@@ -48,8 +51,8 @@ if __name__ == "__main__":
     train_split_file = pjoin(options.data_root, 'train_micro.txt')
     val_split_file = pjoin(options.data_root, 'val_micro.txt')
 
-    train_dataset = MotionDatasetV2(options, mean, std, train_split_file)
-    val_dataset = MotionDatasetV2(options, mean, std, val_split_file)
+    train_dataset = PartMotionDatasetV2(options, mean, std, train_split_file)
+    val_dataset = PartMotionDatasetV2(options, mean, std, val_split_file)
     sample_motion = train_dataset[0]
     print('Sample data shape: ', sample_motion['motion_parts'].shape)
     Dp_max = sample_motion['motion_parts'].shape[-1]
