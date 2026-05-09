@@ -45,13 +45,30 @@ if __name__ == "__main__":
     std = np.load(pjoin(options.data_root, 'Std.npy'))
 
     w_vectorizer = WordVectorizer('./glove', 'our_vab')
-    train_split_file = pjoin(options.data_root, 'train.txt')
-    val_split_file = pjoin(options.data_root, 'val.txt')
+    train_split_file = pjoin(options.data_root, 'train_micro.txt')
+    val_split_file = pjoin(options.data_root, 'val_micro.txt')
 
     train_dataset = MotionDatasetV2(options, mean, std, train_split_file)
     val_dataset = MotionDatasetV2(options, mean, std, val_split_file)
+    sample_motion = train_dataset[0]
+    print('Sample data shape: ', sample_motion['motion_parts'].shape)
+    Dp_max = sample_motion['motion_parts'].shape[-1]
+    
     train_loader = DataLoader(train_dataset, batch_size=options.batch_size, drop_last=True, num_workers=1,
                               shuffle=False, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=options.batch_size, drop_last=True, num_workers=1,
                             shuffle=False, pin_memory=True)
-
+    
+    vqvae = MotionVQVAE(
+        input_dim=Dp_max,
+        enc_hidden_dim=256,
+        dec_hidden_dim=256,
+        latent_dim=256,
+        num_embeddings=256,
+        beta=0.25
+    )
+    
+    trainer = MotionVQVAETrainer(options, vqvae = vqvae)
+    trainer.train(
+        train_dataloader=train_loader,
+        val_dataloader=val_loader)
