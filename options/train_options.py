@@ -8,14 +8,23 @@ class TrainOptions():
     def initialize(self):
         self.parser.add_argument('--name', type = str, default = 'test', help = 'Name of the trial')
         self.parser.add_argument('--checkpoints_dir', type = str, default = './checkpoints', help = 'Models and other data are saved here')
+        self.parser.add_argument('--experiment_dir', type = str, default = './exp_results/vq-vae-setup', help = 'Save experiment loss logs and reports')
         self.parser.add_argument('--dataset_name', type = str, default = 'HumanML3D')
         self.parser.add_argument('--gpu_id', type = int, default = -1, help = 'GPU id')
         self.parser.add_argument('--window_size', type=int, default=40, help="Length of motion clips for reconstruction")
         self.parser.add_argument('--dim_txt_hidden', type = int, default = 512, help = 'Dimension of hidden layer in text encoder')
         self.parser.add_argument('--dim_att_vec', type = int, default = 512, help = 'Dimension of attention vector')
         self.parser.add_argument('--dim_z', type = int, default = 128, help = 'Dimension of latent Gaussian vector')
+        self.parser.add_argument('--lr', type=float, default=1e-4, help='Layers of GRU')
         self.parser.add_argument('--feat_bias', type=float, default=5, help='Layers of GRU')
         self.parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
+        self.parser.add_argument('--log_every', type=int, default=5, help='Frequency of printing training progress (by iteration)')
+        self.parser.add_argument('--save_every_e', type=int, default=10, help='Frequency of saving models (by epoch)')
+        self.parser.add_argument('--eval_every_e', type=int, default=5, help='Frequency of animation results (by epoch)')
+        self.parser.add_argument('--is_continue', action="store_true", help='Is this trail continued from previous trail?')
+        self.parser.add_argument('--max_epoch', type=int, default=10, help='Training iterations')
+        self.parser.add_argument('--save_latest', type=int, default=10, help='Frequency of saving models (by iteration)')
+
 
         self.initialized = True
 

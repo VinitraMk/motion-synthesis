@@ -4,3 +4,4 @@ checkpoints/
 *.pyc
 *.zip
 .ipynb_checkpoints/
+exp_results/*

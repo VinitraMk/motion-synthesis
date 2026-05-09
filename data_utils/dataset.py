@@ -56,7 +56,7 @@ class MotionDatasetV2(data.Dataset):
 
         self.mean = mean
         self.std = std
-        print(f'Motion shape (N, T, D): ({len(self.data)}, {self.data[0].shape[0]}, {self.data[0].shape[1]})')
+        print(f'Motion shape (B, T, D): ({len(self.data)}, {self.data[0].shape[0]}, {self.data[0].shape[1]})')
         print("Total number of motions {}, snippets {}".format(len(self.data), self.cumsum[-1]))
 
     def inv_transform(self, data):
@@ -77,3 +77,81 @@ class MotionDatasetV2(data.Dataset):
         motion = (motion - self.mean) / self.std
 
         return motion
+    
+
+class PartMotionDatasetV2(MotionDatasetV2):
+    def __init__(self, opt, mean, std, split_file):
+        super().__init__(opt, mean, std, split_file)
+        self.joints_num = opt.joints_num
+        assert self.joints_num == 22, "This version assumes HumanML3D with 22 joints."
+
+        self.part_groups = {
+            "root": [],
+            "torso": [3, 6, 9, 12, 15],
+            "left_arm": [13, 16, 18, 20],
+            "right_arm": [14, 17, 19, 21],
+            "left_leg": [1, 4, 7, 10],
+            "right_leg": [2, 5, 8, 11],
+        }
+        self.part_names = list(self.part_groups.keys())
+        self.part_feature_indices = self._build_part_feature_indices()
+        self.d_part_max = max(len(v) for v in self.part_feature_indices.values())
+
+    def _build_part_feature_indices(self):
+        J = self.joints_num
+
+        ric_start = 4
+        ric_end = ric_start + (J - 1) * 3
+
+        rot_start = ric_end
+        rot_end = rot_start + (J - 1) * 6
+
+        vel_start = rot_end
+        vel_end = vel_start + J * 3
+
+        foot_start = vel_end
+
+        part_indices = {}
+
+        for part_name, joints in self.part_groups.items():
+            idxs = []
+
+            if part_name == "root":
+                idxs.extend(range(0, 4))  # root_rot_velocity, root_linear_velocity, root_y
+
+            for j in joints:
+                if j > 0:
+                    ric_offset = ric_start + (j - 1) * 3
+                    idxs.extend(range(ric_offset, ric_offset + 3))
+
+                    rot_offset = rot_start + (j - 1) * 6
+                    idxs.extend(range(rot_offset, rot_offset + 6))
+
+                vel_offset = vel_start + j * 3
+                idxs.extend(range(vel_offset, vel_offset + 3))
+
+            if part_name == "left_leg":
+                idxs.extend([foot_start, foot_start + 1])
+            elif part_name == "right_leg":
+                idxs.extend([foot_start + 2, foot_start + 3])
+
+            part_indices[part_name] = np.array(sorted(idxs), dtype=np.int64)
+
+        return part_indices
+
+    def __getitem__(self, item):
+        motion = super().__getitem__(item)   # (T, 263), already normalized
+
+        T, D = motion.shape
+        P = len(self.part_names)
+        motion_parts = np.zeros((T, P, self.d_part_max), dtype=np.float32)
+
+        for p, part_name in enumerate(self.part_names):
+            idxs = self.part_feature_indices[part_name]
+            part_feat = motion[:, idxs]
+            motion_parts[:, p, :part_feat.shape[1]] = part_feat
+
+        return {
+            "motion": motion.astype(np.float32),              # (B, T, D) = (B, T, 263)
+            "motion_parts": motion_parts.astype(np.float32),  # (B, T, P, D_part_max)
+        }
