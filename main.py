@@ -64,10 +64,10 @@ if __name__ == "__main__":
     
     vqvae = MotionVQVAE(
         input_dim=Dp_max,
-        enc_hidden_dim=256,
-        dec_hidden_dim=256,
+        enc_hidden_dim=512,
+        dec_hidden_dim=512,
         latent_dim=256,
-        num_embeddings=256,
+        num_embeddings=512,
         beta=0.25
     )
     

@@ -262,14 +262,13 @@ class MotionVQVAETrainer(object):
             history["val_loss_codebook"].append(val_codebook_loss)
             history["val_loss_commit"].append(val_commit_loss)
 
-            print(
-                "Validation Loss: %.5f Reconstruction Loss: %.5f "
-                "VQ Loss: %.5f Codebook Loss: %.5f Commitment Loss: %.5f"
-                % (val_loss, val_rec_loss, val_vq_loss, val_codebook_loss, val_commit_loss)
-            )
-
 
             if epoch % self.opt.eval_every_e == 0:
+                print(
+                    "Validation Loss: %.5f Reconstruction Loss: %.5f "
+                    "VQ Loss: %.5f Codebook Loss: %.5f Commitment Loss: %.5f"
+                    % (val_loss, val_rec_loss, val_vq_loss, val_codebook_loss, val_commit_loss)
+                )
                 data = torch.cat([self.recon_motions_by_part, self.motions_by_part], dim=0).detach().cpu().numpy()
                 save_dir = pjoin(self.opt.eval_dir, "E%04d" % epoch)
                 os.makedirs(save_dir, exist_ok=True)
