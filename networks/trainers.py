@@ -126,12 +126,13 @@ class MotionVQVAETrainer(object):
         loss_logs["loss_commit"] = self.loss_commit.item()
         return loss_logs
 
-    def save(self, file_name, ep, total_it):
+    def save(self, file_name, ep, total_it, history = None):
         state = {
             "vqvae": self.vqvae.state_dict(),
             "opt_vqvae": self.opt_vqvae.state_dict(),
             "ep": ep,
             "total_it": total_it,
+            "history": history
         }
         torch.save(state, file_name)
 
@@ -139,7 +140,7 @@ class MotionVQVAETrainer(object):
         checkpoint = torch.load(model_dir, map_location=self.device)
         self.vqvae.load_state_dict(checkpoint["vqvae"])
         self.opt_vqvae.load_state_dict(checkpoint["opt_vqvae"])
-        return checkpoint["ep"], checkpoint["total_it"]
+        return checkpoint["ep"], checkpoint["total_it"], checkpoint["history"]
 
     def train(self, train_dataloader, val_dataloader, plot_eval = None):
         self.vqvae.to(self.device)
@@ -158,12 +159,15 @@ class MotionVQVAETrainer(object):
             "val_loss_codebook": [],
             "val_loss_commit": [],
         }
+        
+        print("Number of epochs:", self.opt.max_epoch)
 
         epoch = 0
         it = 0
         if self.opt.is_continue:
             model_dir = pjoin(self.opt.model_dir, "latest.tar")
-            epoch, it = self.resume(model_dir)
+            epoch, it, history = self.resume(model_dir)
+            print(f'Resuming training from previous checkpoint at epoch {epoch}')
 
         start_time = time.time()
         total_iters = self.opt.max_epoch * len(train_dataloader)
@@ -214,7 +218,7 @@ class MotionVQVAETrainer(object):
                 if it % self.opt.save_latest == 0:
                     self.save(pjoin(self.opt.model_dir, "latest.tar"), epoch, it)
 
-            epoch += 1
+            #epoch += 1
 
             train_loss_avg = train_loss_sum / max(train_steps, 1)
             train_rec_avg = train_rec_sum / max(train_steps, 1)
@@ -228,10 +232,7 @@ class MotionVQVAETrainer(object):
             history["train_loss_codebook"].append(train_codebook_avg)
             history["train_loss_commit"].append(train_commit_avg)
 
-            if epoch % self.opt.save_every_e == 0:
-                self.save(pjoin(self.opt.model_dir, "E%04d.tar" % epoch), epoch, total_it=it)
-
-            print("Validation time:")
+            #print("Validation time:")
             val_loss = 0
             val_rec_loss = 0
             val_vq_loss = 0
@@ -261,7 +262,10 @@ class MotionVQVAETrainer(object):
             history["val_loss_vq"].append(val_vq_loss)
             history["val_loss_codebook"].append(val_codebook_loss)
             history["val_loss_commit"].append(val_commit_loss)
-
+            
+            
+            if epoch % self.opt.save_every_e == 0:
+                self.save(pjoin(self.opt.model_dir, "E%04d.tar" % epoch), epoch, total_it=it, history = history)
 
             if epoch % self.opt.eval_every_e == 0:
                 print(
@@ -274,5 +278,7 @@ class MotionVQVAETrainer(object):
                 os.makedirs(save_dir, exist_ok=True)
                 #plot_eval(data, save_dir)
                 self.save_loss_data(history = history)
+            
+            epoch += 1
         
         self.save_loss_data(history = history)
