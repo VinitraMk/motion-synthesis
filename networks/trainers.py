@@ -143,7 +143,7 @@ class MotionVQVAETrainer(object):
         checkpoint = torch.load(model_dir, map_location=self.device)
         self.vqvae.load_state_dict(checkpoint["vqvae"])
         self.opt_vqvae.load_state_dict(checkpoint["opt_vqvae"])
-        self.scheduler_vqvae.load_state_dict(checkpoint["scheduler_vqvae"]
+        self.scheduler_vqvae.load_state_dict(checkpoint["scheduler_vqvae"])
         return checkpoint["ep"], checkpoint["total_it"], checkpoint["history"]
 
     def train(self, train_dataloader, val_dataloader, plot_eval = None):
