@@ -9,6 +9,7 @@ from torch.nn.utils import clip_grad_norm_
 from utils.utils import print_current_loss_decomp
 import matplotlib.pyplot as plt
 from networks.nn import MotionVQVAE
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 class Logger(object):
   def __init__(self, log_dir):
@@ -117,6 +118,7 @@ class MotionVQVAETrainer(object):
         self.loss.backward()
         self.clip_norm([self.vqvae], 0.5)
         self.step([self.opt_vqvae])
+        self.scheduler_vqvae.step()
 
         loss_logs = OrderedDict()
         loss_logs["loss"] = self.loss.item()
@@ -130,6 +132,7 @@ class MotionVQVAETrainer(object):
         state = {
             "vqvae": self.vqvae.state_dict(),
             "opt_vqvae": self.opt_vqvae.state_dict(),
+            "scheduler_vqvae": self.scheduler_vqvae.state_dict(),
             "ep": ep,
             "total_it": total_it,
             "history": history
@@ -140,12 +143,15 @@ class MotionVQVAETrainer(object):
         checkpoint = torch.load(model_dir, map_location=self.device)
         self.vqvae.load_state_dict(checkpoint["vqvae"])
         self.opt_vqvae.load_state_dict(checkpoint["opt_vqvae"])
+        self.scheduler_vqvae.load_state_dict(checkpoint["scheduler_vqvae"]
         return checkpoint["ep"], checkpoint["total_it"], checkpoint["history"]
 
     def train(self, train_dataloader, val_dataloader, plot_eval = None):
         self.vqvae.to(self.device)
         self.opt_vqvae = optim.Adam(self.vqvae.parameters(), lr=self.opt.lr)
-
+        start_time = time.time()
+        total_iters = self.opt.max_epoch * len(train_dataloader)
+        self.scheduler_vqvae = CosineAnnealingLR(self.opt_vqvae, T_max = total_iters, eta_min = 1e-5)
 
         history = {
             "train_loss": [],
@@ -170,7 +176,6 @@ class MotionVQVAETrainer(object):
             print(f'Resuming training from previous checkpoint at epoch {epoch}')
 
         start_time = time.time()
-        total_iters = self.opt.max_epoch * len(train_dataloader)
         print("Iters Per Epoch, Training: %04d, Validation: %03d" %
               (len(train_dataloader), len(val_dataloader)))
 
