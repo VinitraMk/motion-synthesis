@@ -255,7 +255,7 @@ class MotionVQVAETrainer(object):
                     val_codebook_loss += self.loss_codebook.item()
                     val_commit_loss += self.loss_commit.item()
 
-            denom = len(val_dataloader) + 1
+            denom = max(len(val_dataloader), 1)
             val_loss /= denom
             val_rec_loss /= denom
             val_vq_loss /= denom
