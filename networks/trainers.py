@@ -218,7 +218,7 @@ class MotionVQVAETrainer(object):
                         mean_loss[tag] = value / self.opt.log_every
 
                     logs = OrderedDict()
-                    print_current_loss_decomp(start_time, it, total_iters, mean_loss, epoch, i)
+                    #print_current_loss_decomp(start_time, it, total_iters, mean_loss, epoch, i)
 
                 if it % self.opt.save_latest == 0:
                     self.save(pjoin(self.opt.model_dir, "latest.tar"), epoch, it, history)
@@ -273,6 +273,11 @@ class MotionVQVAETrainer(object):
                 self.save(pjoin(self.opt.model_dir, "E%04d.tar" % epoch), epoch, total_it=it, history = history)
 
             if epoch % self.opt.eval_every_e == 0:
+                print(
+                    "Train Loss: %.5f Reconstruction Loss: %.5f "
+                    "VQ Loss: %.5f Codebook Loss: %.5f Commitment Loss: %.5f"
+                    % (train_loss_avg, train_rec_avg, train_vq_avg, train_codebook_avg, train_commit_avg)
+                )
                 print(
                     "Validation Loss: %.5f Reconstruction Loss: %.5f "
                     "VQ Loss: %.5f Codebook Loss: %.5f Commitment Loss: %.5f"
