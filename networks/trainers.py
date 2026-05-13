@@ -221,7 +221,7 @@ class MotionVQVAETrainer(object):
                     print_current_loss_decomp(start_time, it, total_iters, mean_loss, epoch, i)
 
                 if it % self.opt.save_latest == 0:
-                    self.save(pjoin(self.opt.model_dir, "latest.tar"), epoch, it)
+                    self.save(pjoin(self.opt.model_dir, "latest.tar"), epoch, it, history)
 
             #epoch += 1
 
