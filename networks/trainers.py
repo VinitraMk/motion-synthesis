@@ -273,6 +273,7 @@ class MotionVQVAETrainer(object):
                 self.save(pjoin(self.opt.model_dir, "E%04d.tar" % epoch), epoch, total_it=it, history = history)
 
             if epoch % self.opt.eval_every_e == 0:
+                print("Epoch:", epoch)
                 print(
                     "Train Loss: %.5f Reconstruction Loss: %.5f "
                     "VQ Loss: %.5f Codebook Loss: %.5f Commitment Loss: %.5f"
