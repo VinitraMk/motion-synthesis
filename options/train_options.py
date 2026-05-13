@@ -25,6 +25,8 @@ class TrainOptions():
         self.parser.add_argument('--is_continue', action="store_true", help='Is this trail continued from previous trail?')
         self.parser.add_argument('--max_epoch', type=int, default=2000, help='Training iterations')
         self.parser.add_argument('--save_latest', type=int, default=every_e_interval, help='Frequency of saving models (by iteration)')
+        self.parser.add_argument('--dataset_mode', type=str, default="micro", help='Frequency of saving models (by iteration)')
+
 
 
         self.initialized = True
