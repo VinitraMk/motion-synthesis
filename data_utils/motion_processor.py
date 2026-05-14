@@ -600,7 +600,7 @@ def render_skeleton_animation(
     anim = FuncAnimation(fig, update, frames=num_frames, interval=max(1, int(1000 / fps)), blit=False)
 
     saved_path = None
-
+    '''
     if save_mp4:
         try:
             mp4_path = output_path_no_ext + ".mp4"
@@ -611,6 +611,7 @@ def render_skeleton_animation(
             print('file path: ', output_path_no_ext)
             print('Failed to save motion mp4: ', exc)
             saved_path = None
+    '''
 
     if saved_path is None and save_gif_fallback:
         try:

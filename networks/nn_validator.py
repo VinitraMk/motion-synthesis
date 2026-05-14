@@ -102,7 +102,7 @@ class VQVAEValidator:
             batch = move_batch_to_device(batch, self.device)
             batch_motion_parts = batch['motion_parts']
             batch_text = batch['text']
-            print('batch texts: ', batch_text)
+            #print('batch texts: ', batch_text)
             clip_ids = batch['file_id']
             batch_size = batch_motion_parts.size(0)
 
