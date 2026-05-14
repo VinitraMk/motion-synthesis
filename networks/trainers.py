@@ -182,6 +182,18 @@ class MotionVQVAETrainer(object):
         val_loss = 0
         logs = OrderedDict()
 
+        # loss value init
+        train_loss_avg = 0
+        train_rec_avg = 0
+        train_vq_avg = 0
+        train_codebook_avg = 0
+        train_commit_avg = 0
+        val_loss = 0
+        val_rec_loss = 0
+        val_vq_loss = 0
+        val_codebook_loss = 0
+        val_commit_loss = 0
+
         while epoch < self.opt.max_epoch:
             train_loss_sum = 0.0
             train_rec_sum = 0.0
@@ -291,5 +303,17 @@ class MotionVQVAETrainer(object):
                 self.save_loss_data(history = history)
             
             epoch += 1
+
+        print("Epoch:", epoch)
+        print(
+            "Train Loss: %.5f Reconstruction Loss: %.5f "
+            "VQ Loss: %.5f Codebook Loss: %.5f Commitment Loss: %.5f"
+            % (train_loss_avg, train_rec_avg, train_vq_avg, train_codebook_avg, train_commit_avg)
+        )
+        print(
+            "Validation Loss: %.5f Reconstruction Loss: %.5f "
+            "VQ Loss: %.5f Codebook Loss: %.5f Commitment Loss: %.5f"
+            % (val_loss, val_rec_loss, val_vq_loss, val_codebook_loss, val_commit_loss)
+        )
         
         self.save_loss_data(history = history)
