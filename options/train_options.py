@@ -6,7 +6,7 @@ class TrainOptions():
         self.initialized = False
     
     def initialize(self):
-        every_e_interval = 100
+        every_e_interval = 10
         self.parser.add_argument('--name', type = str, default = 'test', help = 'Name of the trial')
         self.parser.add_argument('--checkpoints_dir', type = str, default = './checkpoints', help = 'Models and other data are saved here')
         self.parser.add_argument('--experiment_dir', type = str, default = './exp_results/vq-vae-setup', help = 'Save experiment loss logs and reports')
