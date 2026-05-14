@@ -4,6 +4,7 @@ import codecs as cs
 import numpy as np
 import os
 from os.path import join as pjoin
+import json
 
 class MotionDatasetV2(data.Dataset):
     def __init__(self, opt, mean, std, split_file):
@@ -13,6 +14,7 @@ class MotionDatasetV2(data.Dataset):
         self.data = []
         self.lengths = []
         id_list = []
+        self.loaded_ids = []
         with cs.open(split_file, 'r') as f:
             for line in f.readlines():
                 id_list.append(line.strip())
@@ -24,6 +26,7 @@ class MotionDatasetV2(data.Dataset):
                     continue
                 self.lengths.append(motion.shape[0] - opt.window_size)
                 self.data.append(motion)
+                self.loaded_ids.append(name)
             except:
                 # Some motion may not exist in KIT dataset
                 pass
@@ -59,6 +62,21 @@ class MotionDatasetV2(data.Dataset):
         print(f'Motion shape (B, T, D): ({len(self.data)}, {self.data[0].shape[0]}, {self.data[0].shape[1]})')
         print("Total number of motions {}, snippets {}".format(len(self.data), self.cumsum[-1]))
 
+    def _load_texts(self, name):
+        text_path = pjoin(self.opt.text_dir, name + '.txt')
+        texts = []
+        if os.path.exists(text_path):
+            with cs.open(text_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split('#')
+                    caption = parts[0].strip()
+                    if caption:
+                        texts.append(caption)
+        return texts
+
     def inv_transform(self, data):
         return data * self.std + self.mean
 
@@ -67,16 +85,27 @@ class MotionDatasetV2(data.Dataset):
 
     def __getitem__(self, item):
         if item != 0:
+            print('inside dataset get_item if')
             motion_id = np.searchsorted(self.cumsum, item) - 1
             idx = item - self.cumsum[motion_id] - 1
         else:
+            print('inside dataset getitem else')
             motion_id = 0
             idx = 0
         motion = self.data[motion_id][idx:idx+self.opt.window_size]
         "Z Normalization"
         motion = (motion - self.mean) / self.std
 
-        return motion
+        motion_file_id = self.loaded_ids[motion_id]
+        texts = self._load_texts(motion_file_id)
+        text = texts[0] if len(texts) > 0 else ""
+
+        return {
+            'motion': motion,
+            'file_id': motion_file_id,
+            'text': text,
+            'texts': texts
+        }
     
 
 class PartMotionDatasetV2(MotionDatasetV2):
@@ -96,6 +125,18 @@ class PartMotionDatasetV2(MotionDatasetV2):
         self.part_names = list(self.part_groups.keys())
         self.part_feature_indices = self._build_part_feature_indices()
         self.d_part_max = max(len(v) for v in self.part_feature_indices.values())
+
+        dataset_mappings = {
+            "part_names": self.part_names,
+            "part_feature_indices": {
+                k: v.tolist() for k, v in self.part_feature_indices.items()
+            },
+            "d_part_max": self.d_part_max,
+            "joints_num": self.joints_num
+        }
+
+        with open(pjoin(self.opt.meta_dir, "part_mapping.json"), "w") as fp:
+            json.dump(dataset_mappings, fp, indent = 4)
 
     def _build_part_feature_indices(self):
         J = self.joints_num
@@ -140,7 +181,8 @@ class PartMotionDatasetV2(MotionDatasetV2):
         return part_indices
 
     def __getitem__(self, item):
-        motion = super().__getitem__(item)   # (T, 263), already normalized
+        motion_data = super().__getitem__(item)   # (T, 263), already normalized
+        motion = motion_data['motion']
 
         T, D = motion.shape
         P = len(self.part_names)
@@ -150,8 +192,12 @@ class PartMotionDatasetV2(MotionDatasetV2):
             idxs = self.part_feature_indices[part_name]
             part_feat = motion[:, idxs]
             motion_parts[:, p, :part_feat.shape[1]] = part_feat
+        
 
         return {
-            "motion": motion.astype(np.float32),              # (B, T, D) = (B, T, 263)
-            "motion_parts": motion_parts.astype(np.float32),  # (B, T, P, D_part_max)
+            "motion": motion.astype(np.float32),              # (T, D) = (T, 263)
+            "motion_parts": motion_parts.astype(np.float32),  # (T, P, D_part_max)
+            "texts": motion_data['texts'],
+            'file_id': motion_data['file_id'],
+            'text': motion_data['text']
         }

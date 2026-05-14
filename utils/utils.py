@@ -1,5 +1,6 @@
 import math
 import time
+import os
 
 def print_current_loss_decomp(start_time, niter_state, total_niters, losses, epoch=None, inner_iter=None):
 
@@ -21,3 +22,7 @@ def print_current_loss_decomp(start_time, niter_state, total_niters, losses, epo
     for k, v in losses.items():
         message += ' %s: %.4f ' % (k, v)
     print(message)
+
+
+def ensure_dir(path: str):
+    os.makedirs(path, exist_ok=True)

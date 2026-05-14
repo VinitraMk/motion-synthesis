@@ -5,3 +5,5 @@ checkpoints/
 *.zip
 .ipynb_checkpoints/
 exp_results/*
+log/*
+output/*
