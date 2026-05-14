@@ -85,11 +85,9 @@ class MotionDatasetV2(data.Dataset):
 
     def __getitem__(self, item):
         if item != 0:
-            print('inside dataset get_item if')
             motion_id = np.searchsorted(self.cumsum, item) - 1
             idx = item - self.cumsum[motion_id] - 1
         else:
-            print('inside dataset getitem else')
             motion_id = 0
             idx = 0
         motion = self.data[motion_id][idx:idx+self.opt.window_size]
