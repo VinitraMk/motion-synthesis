@@ -38,7 +38,7 @@ if __name__ == "__main__":
     options.is_continue = False
     options.dataset_mode = "debug"
     options.batch_size = 64
-    options.model_filename = 'vqvae_beta_0.1_full.tar'
+    options.model_filename = 'vqvae_beta_0.1_full_v0.tar'
 
     os.makedirs(options.model_dir, exist_ok=True)
     os.makedirs(options.meta_dir, exist_ok=True)
