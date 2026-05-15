@@ -33,15 +33,18 @@ These two branches provide the benchmark-vs-structured setup needed to study whe
 ### Results from Part-aware VQVAE
 
 **Validation samples**
-<br>
-<img src="assets/vqvae_results/val_M004469_11.gif" width="47%" alt="Alt text">
-<img src="assets/vqvae_results/val_M009751_31.gif" width="47%" alt="Alt text">
-<br>
+<br/>
+<img src="assets/vqvae_results/val_M004469_11.gif" alt="Alt text">
+<br/>
+<img src="assets/vqvae_results/val_M009751_31.gif" alt="Alt text">
+<br/>
+
 
 **Interpolation samples**
-<br>
-<img src="assets/vqvae_results/interpolated_M012808_000134_0.gif" width="47%" alt="Alt text">
-<img src="assets/vqvae_results/interpolated_M012808_000134_4.gif" width="47%" alt="Alt text">
+<br/>
+<img src="assets/vqvae_results/interpolated_M012808_000134_0.gif" alt="Alt text">
+<br/>
+<img src="assets/vqvae_results/interpolated_M012808_000134_4.gif" alt="Alt text">
 <br>
 
 ## Interpretation of Current Results
