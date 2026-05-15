@@ -31,12 +31,14 @@ if __name__ == "__main__":
     options.meta_dir = pjoin(options.save_root, 'meta')
     options.eval_dir = pjoin(options.save_root, 'animation')
     options.log_dir = pjoin('./log', options.dataset_name, options.name)
+    options.experiment_dir = './exp_results/vq-vae-setup/beta_0.1_full'
     options.output_dir = options.experiment_dir
     options.save_every_e = 10
-    options.is_continue = True 
+    options.is_train = False
+    options.is_continue = False
     options.dataset_mode = "debug"
     options.batch_size = 64
-
+    options.model_filename = 'vqvae_beta_0.1_full.tar'
 
     os.makedirs(options.model_dir, exist_ok=True)
     os.makedirs(options.meta_dir, exist_ok=True)
@@ -117,25 +119,32 @@ if __name__ == "__main__":
     
     vqvae = MotionVQVAE(
         input_dim=Dp_max,
-        enc_hidden_dim=512,
-        dec_hidden_dim=512,
+        enc_hidden_dim=1024,
+        dec_hidden_dim=1024,
         latent_dim=256,
         num_embeddings=512,
-        beta=0.25
+        beta=0.1
     )
-    
-    #trainer = MotionVQVAETrainer(options, vqvae = vqvae)
-    #trainer.train(
-        #train_dataloader=train_loader,
-        #val_dataloader=val_loader)
-    
-    vqvae_model_dict = torch.load(pjoin(options.model_dir, 'vqvae_beta_0.2.tar'), map_location = options.device)
+        
+    if options.is_train: 
+        trainer = MotionVQVAETrainer(options, vqvae = vqvae)
+        trainer.train(
+            train_dataloader=train_loader,
+            val_dataloader=val_loader)
 
-    vqvae.load_state_dict(vqvae_model_dict['vqvae'])
+    test_model_filepath = pjoin(options.model_dir, options.model_filename)
 
-    vqvae_validator = VQVAEValidator(
-        opt = options,
-        vqvae=vqvae,
-        val_dataloader = val_loader
-    )
-    rows = vqvae_validator.validate()
+    if not(options.is_train) and os.path.exists(test_model_filepath):
+        vqvae_model_dict = torch.load(pjoin(options.model_dir, 'vqvae_beta_0.2.tar'), map_location = options.device)
+
+        vqvae.load_state_dict(vqvae_model_dict['vqvae'])
+
+        vqvae_validator = VQVAEValidator(
+            opt = options,
+            vqvae=vqvae,
+            train_dataloader=train_loader,
+            val_dataloader = val_loader
+        )
+        vqvae_validator.validate()
+    else:
+        print("Invalid mode or model file doesn't exist!")
