@@ -196,15 +196,29 @@ class VQVAEValidator:
     def _get_result_from_pretrained_vae(self, x_motion: torch.Tensor, clip_id: str, sample_id: str, sample_text: str, full_text: str = "", denorm_func = None):
         self.pretrained_movementenc.eval()
         self.pretrained_movementdec.eval()
-        print('input x orig size: ', x_motion.size())
-        #x_motion = torch.from_numpy(self.motion_parts_to_full_motion(x[0])).unsqueeze(0)
-        #print('input x motion size: ', x_motion.size())
         enc_out = self.pretrained_movementenc(x_motion[...,:-4])
-        print('pretrained enc out: ', enc_out.size())
         x_recon = self.pretrained_movementdec(enc_out)
-        print('pretrained dec out: ', x_recon.size(), x_motion.size())
-        #metrics = self._compute_metrics(x, x_recon)
-        row = {}
+
+        metrics = self._compute_metrics(x_motion, x_recon)
+
+        row = {
+            'clip_id': clip_id,
+            'snippet_id': sample_id,
+            'shape': tuple(x_motion.shape),
+            'l1': metrics['l1'],
+            'mse': metrics['mse'],
+            'rmse': metrics['rmse'],
+            'max_abs': metrics['max_abs'],
+            'full_text': full_text,
+            'sample_text': sample_text
+        }
+
+        # save output tensors
+        torch.save({
+            'snippet_id': sample_id,
+            'x_motion': x_motion.detach().cpu(),
+            'x_recon': x_recon.detach().cpu(),
+        }, os.path.join(self.tensors_dir, f'{sample_id}.pt'))
 
         
         try:
@@ -233,13 +247,14 @@ class VQVAEValidator:
             row["video_error"] = str(exc)
 
 
-        return {}
+        return row
 
     
     def validate_dataset(self, dataloader, dataset_type = 'train'):
 
         #self.vqvae.eval()
         rows: List[Dict[str, Any]] = []
+        rows_motions: List[Dict[str, Any]] = []
         saved_visuals = 0
         rng = random.Random(self.sampling_seed)
         num_batches = len(dataloader)
@@ -284,18 +299,26 @@ class VQVAEValidator:
                 )
                 
                 rows.append(row)
+                rows_motions.append(row_motion)
 
         metrics_path = pjoin(self.metrics_dir, 'train_metrics.json' if dataset_type == 'train' else 'val_metrics.json')
         with open(metrics_path, "w") as f:
             json.dump(rows, f, indent=4)
 
-        return rows
+        metrics_path = pjoin(self.metrics_dir, 'prevae_train_metric.json' if dataset_type == 'train' else 'prevae_val_metrics.json')
+        with open(metrics_path, 'w') as f:
+            json.dump(rows_motions, f, indent = 4)
+
+        return rows, rows_motions
     
     @torch.no_grad()
     def validate_interpolated_samples(self):
 
         #self.vqvae.eval()
+        drows: List[Dict[str, Any]] = []
+        drows_motions: List[Dict[str, Any]] = []
         rows: List[Dict[str, Any]] = []
+        rows_motions: List[Dict[str, Any]] = []
 
         rng = random.Random(self.sampling_seed)
         sample_indices = rng.sample(range(len(self.val_dataloader.dataset)), 2)
@@ -303,17 +326,38 @@ class VQVAEValidator:
 
         x_a = sample_a['motion_parts']
         x_b = sample_b['motion_parts']
+        x_a_m = sample_a['motion']
+        x_b_m = sample_a['motion']
 
         if not torch.is_tensor(x_a):
             x_a = torch.tensor(x_a)
+            x_a_m = torch.tensor(x_a_m)
         if not torch.is_tensor(x_b):
             x_b = torch.tensor(x_b)
+            x_b_m = torch.tensor(x_b_m)
 
-        x_a = x_a.unsqueeze(0).float().to(self.device)  # (1, T, P, D)
+        x_a = x_a.unsqueeze(0).float().to(self.device)  # (1, T, P, Dp_max)
         x_b = x_b.unsqueeze(0).float().to(self.device)
+        x_a_m = x_a_m.unsqueeze(0).float().to(self.device) # (1, T, D)
+        x_b_m = x_b_m.unsqueeze(0).float().to(self.device)
 
         z_a = self.vqvae.encode(x_a)
         z_b = self.vqvae.encode(x_b)
+        z_a_m = self.pretrained_movementenc(x_a_m[...,:-4])
+        z_b_m = self.pretrained_movementenc(x_b_m[...,:-4])
+
+
+        data_interpolated_samples = {
+            'sample_idx_a': sample_indices[0],
+            'sample_idx_b': sample_indices[1],
+            'file_id_a': sample_a.get('file_id', ''),
+            'file_id_b': sample_b.get('file_id', ''),
+            'text_a': sample_a.get('text', ''),
+            'text_b': sample_b.get('text', ''),
+            'alphas': [],
+            'motion_parts': [],
+            'motions': []
+        }
 
         interpolated_samples = {
             'sample_idx_a': sample_indices[0],
@@ -323,35 +367,86 @@ class VQVAEValidator:
             'text_a': sample_a.get('text', ''),
             'text_b': sample_b.get('text', ''),
             'alphas': [],
-            'motion_parts': []
+            'motion_parts': [],
+            'motions': []
         }
 
         for alpha in np.linspace(0.0, 1.0, self.samples_to_test):
-            z_interp = (1.0 - alpha) * z_a + alpha * z_b
+            x_interp = (1.0 - alpha) * x_a + alpha * x_b
+            x_interp_m = (1.0 - alpha) * x_a_m + alpha * x_b_m
+            data_interpolated_samples['alphas'].append(float(alpha))
+            data_interpolated_samples['motion_parts'].append(x_interp.detach().cpu())
+            data_interpolated_samples['motions'].append(x_interp_m.detach().cpu())
 
+            z_interp = (1.0 - alpha) * z_a + alpha * z_b
+            z_interp_m = (1.0 - alpha) * z_a_m + alpha * z_b_m
             z_q, _, _, _, _ = self.vqvae.quantize(z_interp)
             x_interp = self.vqvae.decode(z_q)
-
+            x_interp_m = self.pretrained_movementdec(z_interp_m)
             interpolated_samples['alphas'].append(float(alpha))
             interpolated_samples['motion_parts'].append(x_interp.detach().cpu())
+            interpolated_samples['motions'].append(x_interp_m.detach().cpu())
 
         clip_id = f"{interpolated_samples['file_id_a']}_{interpolated_samples['file_id_b']}"
-        for si, x in enumerate(interpolated_samples['motion_parts']):
+        for si in range(self.samples_to_test):
+            x = data_interpolated_samples['motion_parts'][si]
+            x_motion = data_interpolated_samples['motions'][si]
+            row = self._get_result_from_vqvae(
+                x = x,
+                random_sample_idx=si,
+                clip_id=clip_id,
+                sample_id=f"data_interpolated_{clip_id}_{si}",
+                sample_text=f"Interpolated sample {si} (data space)",
+                full_text=f"Interpolation of - {interpolated_samples['text_a']} : {interpolated_samples['text_b']}"
+            )
+            row_motion = self._get_result_from_pretrained_vae(
+                x_motion = x_motion,
+                clip_id = clip_id,
+                sample_id=f"prevae_data_interpolated_{clip_id}_{si}",
+                sample_text=f"Interpolated sample {si} (data space)",
+                full_text=f"Interpolation of - {interpolated_samples['text_a']} : {interpolated_samples['text_b']}"
+            )
+            drows.append(row)
+            drows_motions.append(row_motion)
+
+            x = interpolated_samples['motion_parts'][si]
+            x_motion = interpolated_samples['motions'][si]
             row = self._get_result_from_vqvae(
                 x = x,
                 random_sample_idx=si,
                 clip_id=clip_id,
                 sample_id=f"interpolated_{clip_id}_{si}",
-                sample_text=f"Interpolated sample {si}",
+                sample_text=f"Interpolated sample {si} (latent space)",
+                full_text=f"Interpolation of - {interpolated_samples['text_a']} : {interpolated_samples['text_b']}"
+            )
+            row_motion = self._get_result_from_pretrained_vae(
+                x_motion = x_motion,
+                clip_id = clip_id,
+                sample_id=f"prevae_interpolated_{clip_id}_{si}",
+                sample_text=f"Interpolated sample {si} (latent space)",
                 full_text=f"Interpolation of - {interpolated_samples['text_a']} : {interpolated_samples['text_b']}"
             )
             rows.append(row)
+            rows_motions.append(row_motion)
+
+        metrics_path = pjoin(self.metrics_dir, 'data_interpolated_samples_metrics.json')
+        with open(metrics_path, "w") as f:
+            json.dump(drows, f, indent=4)
+
+        metrics_path = pjoin(self.metrics_dir, 'data_prevae_interpolated_samples_metrics.json')
+        with open(metrics_path, "w") as f:
+            json.dump(drows_motions, f, indent=4)
+
 
         metrics_path = pjoin(self.metrics_dir, 'interpolated_samples_metrics.json')
         with open(metrics_path, "w") as f:
             json.dump(rows, f, indent=4)
 
-        return rows
+        metrics_path = pjoin(self.metrics_dir, 'prevae_interpolated_samples_metrics.json')
+        with open(metrics_path, "w") as f:
+            json.dump(rows_motions, f, indent=4)
+
+        return drows, drows_motions, rows, rows_motions
 
 
     @torch.no_grad()
@@ -415,9 +510,9 @@ class VQVAEValidator:
     def validate(self):
         
         # test for memorization of samples
-        train_eval_results = self.validate_dataset(self.train_dataloader, 'train')
-        #val_eval_results = self.validate_dataset(self.val_dataloader, 'val')
-        #interpolation_results = self.validate_interpolated_samples()
-        #uniform_sampling_results = self.validate_random_uniform_samples()
+        #train_eval_results, _ = self.validate_dataset(self.train_dataloader, 'train')
+        #val_eval_results, _ = self.validate_dataset(self.val_dataloader, 'val')
+        self.validate_interpolated_samples()
+        #self.validate_random_uniform_samples()
         
         #return train_eval_results, val_eval_results, interpolation_results, uniform_sampling_results

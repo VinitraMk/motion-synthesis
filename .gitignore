@@ -7,3 +7,4 @@ checkpoints/
 exp_results/*
 log/*
 output/*
+.vscode
