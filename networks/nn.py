@@ -1,13 +1,13 @@
 from torch import nn
-from networks.modules import MovementConvDecoder, MovementConvEncoder, VectorQuantizer
+from networks.modules import PartMovementConvDecoder, PartMovementConvEncoder, VectorQuantizer
 from torch.nn import functional as F
 import torch
 
 class MotionVQVAE(nn.Module):
     """
     Encoder/decoder backbone reuses:
-      - MovementConvEncoder
-      - MovementConvDecoder
+      - PartMovementConvEncoder
+      - PartMovementConvDecoder
 
     Flow:
       x (B,T,P,Dp_max) -> encoder -> z_e (B,C_latent,T_latent,P)
@@ -25,7 +25,7 @@ class MotionVQVAE(nn.Module):
     ):
         super().__init__()
 
-        self.encoder = MovementConvEncoder(
+        self.encoder = PartMovementConvEncoder(
             input_size=input_dim, # Dp_max
             hidden_dim=enc_hidden_dim,
             output_size=latent_dim # C_latent
@@ -35,7 +35,7 @@ class MotionVQVAE(nn.Module):
             embedding_dim=latent_dim,
             beta=beta
         )
-        self.decoder = MovementConvDecoder(
+        self.decoder = PartMovementConvDecoder(
             input_size=latent_dim, # C_latent
             hidden_dim=dec_hidden_dim,
             output_size=input_dim # Dp_max

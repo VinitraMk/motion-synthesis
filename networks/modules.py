@@ -3,9 +3,54 @@ from torch.nn import functional as F
 from utils.nn_utils import init_weight
 import torch
 
+# pick from EricGuo text-to-motion repo
 class MovementConvEncoder(nn.Module):
-    def __init__(self, input_size, hidden_dim, output_size):
+    def __init__(self, input_size, hidden_size, output_size):
         super(MovementConvEncoder, self).__init__()
+        self.main = nn.Sequential(
+            nn.Conv1d(input_size, hidden_size, 4, 2, 1),
+            nn.Dropout(0.2, inplace=True),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv1d(hidden_size, output_size, 4, 2, 1),
+            nn.Dropout(0.2, inplace=True),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+        self.out_net = nn.Linear(output_size, output_size, bias = True)
+        self.main.apply(init_weight)
+        self.out_net.apply(init_weight)
+
+    def forward(self, inputs):
+        inputs = inputs.permute(0, 2, 1)
+        outputs = self.main(inputs).permute(0, 2, 1)
+        # print(outputs.shape)
+        return self.out_net(outputs)
+
+
+class MovementConvDecoder(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size):
+        super(MovementConvDecoder, self).__init__()
+        self.main = nn.Sequential(
+            nn.ConvTranspose1d(input_size, hidden_size, 4, 2, 1),
+            # nn.Dropout(0.2, inplace=True),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.ConvTranspose1d(hidden_size, output_size, 4, 2, 1),
+            # nn.Dropout(0.2, inplace=True),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+        self.out_net = nn.Linear(output_size, output_size)
+
+        self.main.apply(init_weight)
+        self.out_net.apply(init_weight)
+
+    def forward(self, inputs):
+        inputs = inputs.permute(0, 2, 1)
+        outputs = self.main(inputs).permute(0, 2, 1)
+        return self.out_net(outputs)
+
+# modified for part-aware editing
+class PartMovementConvEncoder(nn.Module):
+    def __init__(self, input_size, hidden_dim, output_size):
+        super(PartMovementConvEncoder, self).__init__()
         self.main = nn.Sequential(
             nn.Conv2d(in_channels = input_size, out_channels=hidden_dim, kernel_size = (4, 1), stride = (2, 1), padding=(1,0)),
             nn.Dropout(0.2, inplace=True),
@@ -24,9 +69,9 @@ class MovementConvEncoder(nn.Module):
         return outputs
 
 
-class MovementConvDecoder(nn.Module):
+class PartMovementConvDecoder(nn.Module):
     def __init__(self, input_size, hidden_dim, output_size):
-        super(MovementConvDecoder, self).__init__()
+        super(PartMovementConvDecoder, self).__init__()
         self.main = nn.Sequential(
             nn.ConvTranspose2d(in_channels = input_size, out_channels=hidden_dim, kernel_size = (4, 1), stride = (2, 1), padding=(1,0)),
             # nn.Dropout(0.2, inplace=True),

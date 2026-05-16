@@ -11,6 +11,7 @@ The core hypothesis is that a **part-based representation** can make motion edit
 - and apply **part-based masking** in latent space for targeted generation.
 
 In this view, part-aware latent structure and masked latent regeneration are the two main ingredients for controllable editing.
+This codebase is heavily based on the implementation and data processing pipeline from the [EricGuo5513/text-to-motion](https://github.com/EricGuo5513/text-to-motion/tree/main) repository, with adaptations for part-based motion representation and latent editing experiments.
 
 ## Phases
 

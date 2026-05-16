@@ -579,6 +579,7 @@ def render_skeleton_animation(
     joints_recon = np.asarray(joints_recon)
 
     num_frames = min(joints_gt.shape[0], joints_recon.shape[0])
+    #num_frames = joints_gt.shape[0]
     joints_gt = joints_gt[:num_frames]
     joints_recon = joints_recon[:num_frames]
 
