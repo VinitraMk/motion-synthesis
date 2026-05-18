@@ -12,7 +12,7 @@ from utils.nn_utils import move_batch_to_device
 from data_utils.motion_processor import render_skeleton_animation, HUMANML3D_SKELETON_EDGES
 from data_utils.motion_processor import recover_from_ric
 from os.path import join as pjoin
-from networks.modules import MovementConvDecoder, MovementConvEncoder
+from networks.autoencoder_modules import MovementConvDecoder, MovementConvEncoder
 
 class VQVAEValidator:
 
@@ -510,9 +510,9 @@ class VQVAEValidator:
     def validate(self):
         
         # test for memorization of samples
-        #train_eval_results, _ = self.validate_dataset(self.train_dataloader, 'train')
-        #val_eval_results, _ = self.validate_dataset(self.val_dataloader, 'val')
+        train_eval_results, _ = self.validate_dataset(self.train_dataloader, 'train')
+        val_eval_results, _ = self.validate_dataset(self.val_dataloader, 'val')
         self.validate_interpolated_samples()
-        #self.validate_random_uniform_samples()
+        self.validate_random_uniform_samples()
         
         #return train_eval_results, val_eval_results, interpolation_results, uniform_sampling_results
