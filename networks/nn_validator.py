@@ -13,6 +13,7 @@ from data_utils.motion_processor import render_skeleton_animation, HUMANML3D_SKE
 from data_utils.motion_processor import recover_from_ric
 from os.path import join as pjoin
 from networks.autoencoder_modules import MovementConvDecoder, MovementConvEncoder
+from utils.pretrained_model_utils import get_pretrained_vae
 
 class VQVAEValidator:
 
@@ -23,7 +24,6 @@ class VQVAEValidator:
         self.train_dataloader = train_dataloader
         self.samples_to_test = samples_to_test
         self.sampling_seed = 42
-        self.dimpose = 263
 
         self.videos_dir = pjoin(opt.output_dir, f'{video_dir_name}')
         self.tensors_dir = pjoin(opt.output_dir, f'{tensors_dir_name}')
@@ -48,25 +48,10 @@ class VQVAEValidator:
             for k, v in mapping['part_feature_indices'].items()
         }
         self.motion_dim = self.mean.shape[0]
-        self._load_pretrained_vae()
+        self.pretrained_movementenc, self.pretrained_movementdec = get_pretrained_vae(self.opt.checkpoints_dir) 
 
         
     def _load_pretrained_vae(self):
-        self.pretrained_movementenc = MovementConvEncoder(
-            input_size = self.dimpose - 4,
-            hidden_size = 512,
-            output_size = 512
-        )
-        self.pretrained_movementdec = MovementConvDecoder(
-            input_size = 512,
-            hidden_size = 512,
-            output_size = self.dimpose
-        )
-        humanml3d_vae_chkpoint = torch.load(pjoin(self.opt.checkpoints_dir, 'model/humanml3d_pretrained_vae.tar'), map_location = torch.device("cpu"))
-        self.pretrained_movementenc.load_state_dict(humanml3d_vae_chkpoint['movement_enc'])
-        self.pretrained_movementdec.load_state_dict(humanml3d_vae_chkpoint['movement_dec'])
-        self.pretrained_movementenc.eval()
-        self.pretrained_movementdec.eval()
 
     @torch.no_grad()
     def _compute_metrics(self, x: torch.Tensor, x_recon: torch.Tensor) -> Dict[str, float]:
