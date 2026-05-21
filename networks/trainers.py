@@ -420,6 +420,8 @@ class MotionDiTTrainer(object):
             print("NaN in xt")
         if torch.isnan(self.text_emb).any():
             print("NaN in text_emb")
+        if torch.isnan(self.target).any():
+            print("NaN in target")
         self.pred = self.dit(
             self.xt,
             self.t,
