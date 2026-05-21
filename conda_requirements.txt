@@ -19,7 +19,6 @@ charset-normalizer=3.4.7=pyhd8ed1ab_0
 click=8.3.3=pyhc90fa1f_0
 comm=0.2.3=pyhe01879c_0
 contourpy=1.3.3=py311h7d85929_4
-cpuonly=2.0=0
 cpython=3.11.15=py311hd8ed1ab_0
 cycler=0.12.1=pyhcf101f3_2
 debugpy=1.8.20=py311h8948835_0
@@ -115,8 +114,7 @@ python=3.11.15=h8561d8f_0_cpython
 python-dateutil=2.9.0.post0=pyhe01879c_2
 python-gil=3.11.15=hd8ed1ab_0
 python_abi=3.11=8_cp311
-pytorch=2.5.1=py3.11_0
-pytorch-mutex=1.0=cpu
+pytorch=2.5.1
 pyyaml=6.0.3=py311hc290fe0_1
 pyzmq=27.1.0=py311h745ac33_2
 qhull=2020.2=h420ef59_5
@@ -133,8 +131,8 @@ stack_data=0.6.3=pyhd8ed1ab_1
 sympy=1.14.0=pyh2585a3b_106
 timm=1.0.27=pyhcf101f3_0
 tk=8.6.13=h010d191_3
-torchaudio=2.5.1=py311_cpu
-torchvision=0.20.1=py311_cpu
+torchaudio=2.5.1
+torchvision=0.20.1
 tornado=6.5.5=py311hc949640_0
 tqdm=4.67.3=pyh8f84b5b_0
 traitlets=5.15.0=pyhcf101f3_0
