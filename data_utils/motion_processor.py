@@ -620,8 +620,9 @@ def render_skeleton_animation(
             writer = PillowWriter(fps=fps)
             anim.save(gif_path, writer=writer)
             saved_path = gif_path
-        except Exception:
+        except Exception as exec:
             saved_path = None
+            print('GIF file not saved: ', exec)
     plt.close(fig)
     return saved_path
 
