@@ -16,7 +16,7 @@ class TrainOptions():
         self.parser.add_argument('--dim_txt_hidden', type = int, default = 512, help = 'Dimension of hidden layer in text encoder')
         self.parser.add_argument('--dim_att_vec', type = int, default = 512, help = 'Dimension of attention vector')
         self.parser.add_argument('--dim_z', type = int, default = 128, help = 'Dimension of latent Gaussian vector')
-        self.parser.add_argument('--lr', type=float, default=1e-4, help='Layers of GRU')
+        self.parser.add_argument('--lr', type=float, default=1e-3, help='Layers of GRU')
         self.parser.add_argument('--feat_bias', type=float, default=5, help='Layers of GRU')
         self.parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
         self.parser.add_argument('--log_every', type=int, default=every_e_interval, help='Frequency of printing training progress (by iteration)')
