@@ -336,7 +336,7 @@ class MotionDiTTrainer(object):
 
         self.dit = dit.to(self.device)
 
-        self.opt_dit = torch.optim.AdamW(
+        self.opt_dit = torch.optim.Adam(
             self.dit.parameters(),
             lr=args.lr,
             betas=(0.9, 0.999),
