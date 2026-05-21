@@ -7,8 +7,8 @@ def make_debug_splits(
     out_dir,
     train_debug_n=64,
     val_debug_n=32,
-    micro_train_n=8,
-    micro_val_n=4,
+    micro_train_n=6,
+    micro_val_n=3,
     seed=1234,
 ):
     rng = random.Random(seed)

@@ -49,10 +49,10 @@ class VQVAEValidator:
         }
         self.motion_dim = self.mean.shape[0]
         self.pretrained_movementenc, self.pretrained_movementdec = get_pretrained_vae(self.opt.checkpoints_dir) 
+        self.pretrained_movementenc.to(self.device)
+        self.pretrained_movementdec.to(self.device)
 
         
-    def _load_pretrained_vae(self):
-
     @torch.no_grad()
     def _compute_metrics(self, x: torch.Tensor, x_recon: torch.Tensor) -> Dict[str, float]:
         diff = x_recon - x

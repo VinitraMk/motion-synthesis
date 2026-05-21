@@ -10,7 +10,7 @@ from utils.utils import print_current_loss_decomp
 import matplotlib.pyplot as plt
 from networks.nn import MotionVQVAE, DiT
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from autoencoder_modules import MovementConvEncoder, MovementConvDecoder
+from networks.autoencoder_modules import MovementConvEncoder, MovementConvDecoder
 from utils.pretrained_model_utils import get_pretrained_vae, get_pretrained_text_encoder
 
 class Logger(object):
@@ -340,14 +340,9 @@ class MotionDiTTrainer(object):
             self.dit.parameters(),
             lr=args.lr,
             betas=(0.9, 0.999),
-            weight_decay=args.weight_decay
+            weight_decay=1e-4
         )
 
-        self.scheduler_dit = torch.optim.lr_scheduler.StepLR(
-            self.opt_dit,
-            step_size=args.lr_step,
-            gamma=args.lr_gamma
-        )
 
         self.vae = None
         self.text_encoder = get_pretrained_text_encoder(self.device)
@@ -403,12 +398,15 @@ class MotionDiTTrainer(object):
         motions = batch_data['motion'].detach().to(self.device).float()
         texts = batch_data['text']
         with torch.no_grad():
-            self.latents = self.encoder(motions)
-            self.text_emb = self.text_encoder.encode(
+            latents = self.encoder(motions[:, :, :-4])
+            text_emb = self.text_encoder.encode(
                 texts,
                 convert_to_tensor = True,
                 device = str(self.device)
             ).float()
+        self.latents = latents.clone() # to ensure that inference tensors are not created
+        self.text_emb = text_emb.clone() # to ensure that inference tensors are not created
+
         self.noise = torch.randn_like(self.latents)
         B = self.latents.shape[0]
         self.t = torch.rand(B, device = self.device)
@@ -456,8 +454,9 @@ class MotionDiTTrainer(object):
 
     def train(self, train_dataloader, val_dataloader, plot_eval = None):
         self.dit.to(self.device)
-        start_time = time.time()
         total_iters = self.opt.max_epoch * len(train_dataloader)
+
+        self.scheduler_dit = CosineAnnealingLR(self.opt_dit, T_max = total_iters, eta_min = 1e-5)
 
         history = {
             "train_loss": [],

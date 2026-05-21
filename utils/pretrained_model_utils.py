@@ -14,7 +14,7 @@ def get_pretrained_vae(checkpoint_dir):
     decoder = MovementConvDecoder(
         input_size = 512,
         hidden_size = 512,
-        output_size = DIMPOSE - 4
+        output_size = DIMPOSE
     )
 
     humanml3d_vae_chkpoint = torch.load(pjoin(checkpoint_dir, 'model/humanml3d_pretrained_vae.tar'), map_location = torch.device("cpu"))

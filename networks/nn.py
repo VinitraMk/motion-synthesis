@@ -120,9 +120,9 @@ class DiT(nn.Module):
         text_dim=384,
         depth=12,
         num_heads=6,
-        max_seq_len=40, # window size of the Dataset class
+        max_seq_len=10, # window size of the Dataset class
         mlp_ratio=4.0,
-        learn_sigma=True,
+        learn_sigma=False,
     ):
         super().__init__()
         self.learn_sigma = learn_sigma
@@ -198,10 +198,11 @@ class DiT(nn.Module):
         d: (N,) tensor of diffusion steps
         y: (N, D_text) tensor of text conditions
         """
+        #print('x shapes: ', x.size(), self.x_embedder(x).size(), self.pos_embed.size())
         x = self.x_embedder(x) + self.pos_embed  # (N, T, C_latent),
         t = self.t_embedder(t)                   # (N, C_latent)
         d = self.d_embedder(d)                   # (N, C_latent)
-        y = self.y_embedder(y, self.training)    # (N, C_latent)
+        y = self.y_embedder(y)                   # (N, C_latent)
         c = t + d + y                            # (N, C_latent)
         for block in self.blocks:
             x = block(x, c)                      # (N, T, C_latent)
