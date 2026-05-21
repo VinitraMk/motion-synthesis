@@ -440,6 +440,9 @@ class MotionDiTTrainer(object):
         self.loss = F.mse_loss(self.pred, self.target)
 
     def update(self):
+        if torch.isnan(self.loss):
+            print("NaN loss before backward, skipping step")
+            return OrderedDict()
         self.zero_grad([self.opt_dit])
         self.loss.backward()
         self.clip_norm([self.dit], 0.5)
