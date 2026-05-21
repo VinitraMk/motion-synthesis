@@ -474,7 +474,7 @@ class MotionDiTTrainer(object):
             print(f'Resuming training from previous checkpoint at epoch {epoch}')
 
         start_time = time.time()
-        print("Iters Per Epoch, Training: %04d, Validation: %03d" %
+        print("Iters Per Epoch, Training: %04d, Validation: %03d\n" %
               (len(train_dataloader), len(val_dataloader)))
 
         val_loss = 0
