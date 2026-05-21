@@ -116,6 +116,9 @@ class MotionVQVAETrainer(object):
         self.loss_commit = self.outputs["commitment_loss"]
 
     def update(self):
+        if torch.isnan(self.loss):
+            print("NaN loss before backward, skipping step")
+            return OrderedDict()
         self.zero_grad([self.opt_vqvae])
         self.loss.backward()
         self.clip_norm([self.vqvae], 0.5)
