@@ -415,12 +415,23 @@ class MotionDiTTrainer(object):
         self.xt = (1.0 - t_view) * self.noise + t_view * self.latents
         self.d = torch.zeros(B, device = self.device)
         self.target = self.latents - self.noise
+        # Check inputs to DiT
+        if torch.isnan(self.xt).any():
+            print("NaN in xt")
+        if torch.isnan(self.text_emb).any():
+            print("NaN in text_emb")
         self.pred = self.dit(
             self.xt,
             self.t,
             self.d,
             self.text_emb
         )
+        # Check output of DiT and loss
+        if torch.isnan(self.pred).any():
+            print("NaN in pred")
+        self.loss = F.mse_loss(self.pred, self.target)
+        if torch.isnan(self.loss):
+            print("NaN in loss")
         self.loss = F.mse_loss(self.pred, self.target)
 
     def update(self):
