@@ -1,7 +1,9 @@
 from torch import nn
-from networks.modules import PartMovementConvDecoder, PartMovementConvEncoder, VectorQuantizer
+from networks.autoencoder_modules import PartMovementConvDecoder, PartMovementConvEncoder, VectorQuantizer
 from torch.nn import functional as F
 import torch
+from networks.transformer_modules import ScalarCondEmbedder, TextEmbedder, DiTBlock, FinalLayer, get_1d_sincos_pos_embed_from_grid
+import numpy as np
 
 class MotionVQVAE(nn.Module):
     """
@@ -105,3 +107,105 @@ class MotionVQVAE(nn.Module):
 
         x_recon = self.decode(z_q)  # (B, T, P, D)
         return x_recon
+
+
+class DiT(nn.Module):
+    """
+    Diffusion model with a Transformer backbone.
+    """
+    def __init__(
+        self,
+        input_size, # latent dim size
+        hidden_size=1152,
+        text_dim=384,
+        depth=9,
+        num_heads=4,
+        max_seq_len=10, # window size of the Dataset class
+        mlp_ratio=4.0,
+        learn_sigma=False,
+    ):
+        super().__init__()
+        self.learn_sigma = learn_sigma
+        self.latent_dim = input_size
+        self.out_dim = self.latent_dim * 2 if learn_sigma else self.latent_dim
+        self.num_heads = num_heads
+        self.hidden_size = hidden_size
+        self.max_seq_len = max_seq_len
+
+        self.x_embedder = nn.Linear(input_size, hidden_size, bias = True)
+        self.t_embedder = ScalarCondEmbedder(hidden_size)
+        self.d_embedder = ScalarCondEmbedder(hidden_size)
+        self.y_embedder = TextEmbedder(text_dim = text_dim, hidden_size=hidden_size)
+
+        # Will use fixed sin-cos embedding:
+        self.pos_embed = nn.Parameter(
+            torch.zeros(1, max_seq_len, hidden_size), requires_grad = True
+        )
+
+        self.blocks = nn.ModuleList([
+            DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
+        ])
+        self.final_layer = FinalLayer(hidden_size, self.out_dim)
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        # Initialize transformer layers:
+        def _basic_init(module):
+            if isinstance(module, nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+        self.apply(_basic_init)
+
+        # Initialize (and freeze) pos_embed by sin-cos embedding:
+        pos = np.arange(self.max_seq_len, dtype=np.float32)
+        pos_embed = get_1d_sincos_pos_embed_from_grid(self.hidden_size, pos)
+        self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
+
+        # Initialize patch_embed like nn.Linear (instead of nn.Conv2d):
+        w = self.x_embedder.weight.data
+        nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
+        nn.init.constant_(self.x_embedder.bias, 0)
+
+        # Initialize label embedding table:
+        for layer in self.y_embedder.proj:
+            if isinstance(layer, nn.Linear):
+                nn.init.normal_(layer.weight, std=0.02)
+                nn.init.constant_(layer.bias, 0)
+
+        # Initialize timestep embedding MLP:
+        nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
+        nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
+        nn.init.normal_(self.d_embedder.mlp[0].weight, std=0.02)
+        nn.init.normal_(self.d_embedder.mlp[2].weight, std=0.02)
+
+        # Zero-out adaLN modulation layers in DiT blocks:
+        for block in self.blocks:
+            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
+            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+
+        # Zero-out output layers:
+        nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer.adaLN_modulation[-1].bias, 0)
+        nn.init.constant_(self.final_layer.linear.weight, 0)
+        nn.init.constant_(self.final_layer.linear.bias, 0)
+
+    def forward(self, x, t, d, y):
+        """
+        Forward pass of DiT.
+        x: (N, T, D_latent) tensor of temporal inputs (latent representations of motion)
+        t: (N,) tensor of diffusion timesteps
+        d: (N,) tensor of diffusion steps
+        y: (N, D_text) tensor of text conditions
+        """
+        #print('x shapes: ', x.size(), self.x_embedder(x).size(), self.pos_embed.size())
+        x = self.x_embedder(x) + self.pos_embed  # (N, T, C_latent),
+        t = self.t_embedder(t)                   # (N, C_latent)
+        d = self.d_embedder(d)                   # (N, C_latent)
+        y = self.y_embedder(y)                   # (N, C_latent)
+        c = t + d + y                            # (N, C_latent)
+        for block in self.blocks:
+            x = block(x, c)                      # (N, T, C_latent)
+        x = self.final_layer(x, c)               # (N, T, D_latent)
+        return x
+

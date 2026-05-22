@@ -1,4 +1,5 @@
 import torch
+from torch.backends import cuda
 from options.train_options  import TrainOptions
 from os.path import join as pjoin
 import os
@@ -8,18 +9,24 @@ from utils.word_vectorizer import WordVectorizer
 from torch.utils.data import DataLoader
 from data_utils.dataset import MotionDatasetV2
 from data_utils.dataset import PartMotionDatasetV2
-from networks.nn import MotionVQVAE
-from networks.trainers import MotionVQVAETrainer
+from networks.nn import MotionVQVAE, DiT
+from networks.trainers import MotionVQVAETrainer, MotionDiTTrainer
 from torch.utils.data import Subset
-from networks.nn_validator import VQVAEValidator
+from networks.nn_validator import VQVAEValidator, DiffusionValidator
 import json
 
 if __name__ == "__main__":
+    # set training options
     parser = TrainOptions()
-    options = parser.parse(args = ['--max_epoch', '600'])
+    options = parser.parse(args = ['--max_epoch', '600', '--stage', 'generation', '--lr', '3e-4', '--stage', 'generation'])
     options.gpu_id = torch.cuda.current_device() if torch.cuda.is_available() else -1
     options.device = torch.device("cpu" if options.gpu_id==-1 else "cuda:" + str(options.gpu_id))
     torch.autograd.set_detect_anomaly(True)
+    # disabling flash backend till the architecture parameters allow stable use of flash backend for attention
+    # without creating nans
+    cuda.enable_flash_sdp(False)
+    cuda.enable_mem_efficient_sdp(False)
+    cuda.enable_math_sdp(True)
 
     if options.gpu_id != -1:
         # self.opt.gpu_id = int(self.opt.gpu_id)
@@ -31,14 +38,18 @@ if __name__ == "__main__":
     options.meta_dir = pjoin(options.save_root, 'meta')
     options.eval_dir = pjoin(options.save_root, 'animation')
     options.log_dir = pjoin('./log', options.dataset_name, options.name)
-    options.experiment_dir = './exp_results/vq-vae-setup/beta_0.1_full'
+    options.experiment_dir = './exp_results/onestep-diffusion-setup/finetune'
+    #options.experiment_dir = './exp_results/vq-vae-setup/beta_0.1_full'
     options.output_dir = options.experiment_dir
-    options.save_every_e = 10
+    options.save_every_e = 5
     options.is_train = False
     options.is_continue = False
     options.dataset_mode = "debug"
     options.batch_size = 64
-    options.model_filename = 'vqvae_beta_0.1_full_v0.tar'
+    if not(options.is_train) and options.stage == "autoencoder":
+        options.model_filename = 'vqvae_beta_0.1_full_v0.tar'
+    elif not(options.is_train) and options.stage == "generation":
+        options.model_filename = 'dit_debug_trans_9_atten_4.tar'
 
     os.makedirs(options.model_dir, exist_ok=True)
     os.makedirs(options.meta_dir, exist_ok=True)
@@ -55,7 +66,13 @@ if __name__ == "__main__":
     fps = 20
     kinematic_chain = t2m_kinematic_chain
 
+    print('Set parameters')
+    print('Learning rate: ', options.lr)
+    print('Max epochs: ', options.max_epoch)
+    print('Pipeline stage: ', options.stage)
 
+
+    # load datasets
     mean = np.load(pjoin(options.data_root, 'Mean.npy'))
     std = np.load(pjoin(options.data_root, 'Std.npy'))
 
@@ -73,7 +90,10 @@ if __name__ == "__main__":
     train_split_file = pjoin(options.data_root, train_split_fn)
     val_split_file = pjoin(options.data_root, val_split_fn)
 
-    if options.dataset_mode == "micro":
+    if options.dataset_mode in ["micro", "nano"]:
+        train_dlen = 150 if options.dataset_mode == "micro" else 30
+        val_dlen = 50 if options.dataset_mode == "micro" else 15
+
         subset_path = os.path.join(options.meta_dir, "micro_subsets.json")
         par_train_dataset = PartMotionDatasetV2(options, mean, std, train_split_file)
         par_val_dataset = PartMotionDatasetV2(options, mean, std, val_split_file)
@@ -117,34 +137,70 @@ if __name__ == "__main__":
     val_loader = DataLoader(val_dataset, batch_size=options.batch_size, drop_last=True, num_workers=1,
                             shuffle=False, pin_memory=True)
     
-    vqvae = MotionVQVAE(
-        input_dim=Dp_max,
-        enc_hidden_dim=1024,
-        dec_hidden_dim=1024,
-        latent_dim=256,
-        num_embeddings=512,
-        beta=0.1
-    )
-        
-    if options.is_train: 
-        trainer = MotionVQVAETrainer(options, vqvae = vqvae)
-        trainer.train(
-            train_dataloader=train_loader,
-            val_dataloader=val_loader)
-
-    test_model_filepath = pjoin(options.model_dir, options.model_filename)
-
-    if not(options.is_train) and os.path.exists(test_model_filepath):
-        vqvae_model_dict = torch.load(pjoin(options.model_dir, 'vqvae_beta_0.2.tar'), map_location = options.device)
-
-        vqvae.load_state_dict(vqvae_model_dict['vqvae'])
-
-        vqvae_validator = VQVAEValidator(
-            opt = options,
-            vqvae=vqvae,
-            train_dataloader=train_loader,
-            val_dataloader = val_loader
+    if options.stage == 'autoencoder':
+        vqvae = MotionVQVAE(
+            input_dim=Dp_max,
+            enc_hidden_dim=1024,
+            dec_hidden_dim=1024,
+            latent_dim=256,
+            num_embeddings=512,
+            beta=0.1
         )
-        vqvae_validator.validate()
+            
+        if options.is_train: 
+            trainer = MotionVQVAETrainer(options, vqvae = vqvae)
+            trainer.train(
+                train_dataloader=train_loader,
+                val_dataloader=val_loader)
     else:
-        print("Invalid mode or model file doesn't exist!")
+        dit = DiT(
+            input_size = 512,
+            hidden_size = 1152,
+            text_dim = 384
+        )
+
+        if options.is_train:
+            trainer = MotionDiTTrainer(
+                args = options,
+                dit = dit,
+                autoencoder_type="pretrained_vae"
+            )
+            trainer.train(
+                train_dataloader=train_loader,
+                val_dataloader=val_loader
+            )
+
+    if options.stage == 'autoencoder':
+        test_model_filepath = pjoin(options.model_dir, options.model_filename)
+
+        if not(options.is_train) and os.path.exists(test_model_filepath):
+            vqvae_model_dict = torch.load(pjoin(options.model_dir, 'vqvae_beta_0.2.tar'), map_location = options.device)
+
+            vqvae.load_state_dict(vqvae_model_dict['vqvae'])
+
+            vqvae_validator = VQVAEValidator(
+                opt = options,
+                vqvae=vqvae,
+                train_dataloader=train_loader,
+                val_dataloader = val_loader
+            )
+            vqvae_validator.validate()
+        else:
+            print("Invalid mode or model file doesn't exist!")
+    else:
+        test_model_filepath = pjoin(options.model_dir, options.model_filename)
+
+        if not(options.is_train) and os.path.exists(test_model_filepath):
+            dit_model_dict = torch.load(test_model_filepath, map_location = options.device)
+
+            dit.load_state_dict(dit_model_dict['dit'])
+
+            diffusion_validator = DiffusionValidator(
+                opt = options,
+                dit=dit,
+                train_dataloader=train_loader,
+                val_dataloader = val_loader
+            )
+            diffusion_validator.validate()
+        else:
+            print("Invalid mode or model file doesn't exist!")

@@ -8,8 +8,10 @@ from os.path import join as pjoin
 from torch.nn.utils import clip_grad_norm_
 from utils.utils import print_current_loss_decomp
 import matplotlib.pyplot as plt
-from networks.nn import MotionVQVAE
+from networks.nn import MotionVQVAE, DiT
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from networks.autoencoder_modules import MovementConvEncoder, MovementConvDecoder
+from utils.pretrained_model_utils import get_pretrained_vae, get_pretrained_text_encoder
 
 class Logger(object):
   def __init__(self, log_dir):
@@ -114,6 +116,9 @@ class MotionVQVAETrainer(object):
         self.loss_commit = self.outputs["commitment_loss"]
 
     def update(self):
+        if torch.isnan(self.loss):
+            print("NaN loss before backward, skipping step")
+            return OrderedDict()
         self.zero_grad([self.opt_vqvae])
         self.loss.backward()
         self.clip_norm([self.vqvae], 0.5)
@@ -317,3 +322,311 @@ class MotionVQVAETrainer(object):
         )
         
         self.save_loss_data(history = history)
+
+
+class MotionDiTTrainer(object):
+    def __init__(self,
+            args,
+            dit: DiT,
+            autoencoder_type: str
+        ):
+        self.opt = args
+        self.dit = dit 
+        self.device = args.device
+
+        if args.is_train:
+            self.logger = Logger(args.log_dir)
+
+        self.dit = dit.to(self.device)
+
+        weight_decay = 1e-3
+        param_groups = self._get_param_groups(model = self.dit, weight_decay=weight_decay)
+
+        self.opt_dit = torch.optim.AdamW(
+            param_groups,
+            lr=args.lr,
+            betas=(0.9, 0.999),
+            weight_decay=1e-4
+        )
+
+        self.vae = None
+        self.text_encoder = get_pretrained_text_encoder(self.device)
+
+        self._init_vae(autoencoder_type)
+
+    def _get_param_groups(self, model: DiT, weight_decay: float = 1e-4):
+        decay_params = []
+        no_decay_params = []
+
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            # 1D params are usually biases or norm weights -> no weight decay
+            if param.ndim == 1 or name.endswith(".bias"):
+                no_decay_params.append(param)
+            else:
+                decay_params.append(param)
+
+        return [
+            {"params": decay_params, "weight_decay": weight_decay},
+            {"params": no_decay_params, "weight_decay": 0.0},
+        ]
+
+    def _init_vae(self, autoencoder_type: str):
+        if autoencoder_type == "pretrained_vae":
+            self.encoder, self.decoder = get_pretrained_vae(self.opt.checkpoints_dir)
+            self.encoder.to(self.device)
+            self.decoder.to(self.device)
+        else:
+            raise ValueError(f"Unknown vae_name: {autoencoder_type}")
+
+    @staticmethod
+    def zero_grad(opt_list):
+        for opt in opt_list:
+            opt.zero_grad()
+
+    @staticmethod
+    def clip_norm(network_list, max_norm=0.5):
+        for network in network_list:
+            clip_grad_norm_(network.parameters(), max_norm)
+
+    @staticmethod
+    def step(opt_list):
+        for opt in opt_list:
+            opt.step()
+
+    def save_loss_data(self, history):
+
+        os.makedirs(self.opt.experiment_dir, exist_ok=True)
+        epochs = range(1, len(history["train_loss"]) + 1)
+
+        loss_pairs = [
+            ("loss", "Total Loss"),
+        ]
+
+        for key, title in loss_pairs:
+            plt.figure(figsize=(8, 5))
+            plt.plot(epochs, history[f"train_{key}"], label=f"train_{key}")
+            plt.plot(epochs, history[f"val_{key}"], label=f"val_{key}")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.title(title)
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(pjoin(self.opt.experiment_dir, f"{key}.png"))
+            plt.close()
+
+    def forward(self, batch_data):
+        motions = batch_data['motion'].detach().to(self.device).float()
+        texts = batch_data['text']
+        with torch.no_grad():
+            latents = self.encoder(motions[:, :, :-4])
+            text_emb = self.text_encoder.encode(
+                texts,
+                convert_to_tensor = True,
+                device = str(self.device)
+            ).float()
+        self.latents = latents.clone() # to ensure that inference tensors are not created
+        self.text_emb = text_emb.clone() # to ensure that inference tensors are not created
+
+        self.noise = torch.randn_like(self.latents)
+        B = self.latents.shape[0]
+        self.t = torch.rand(B, device = self.device)
+        t_view = self.t.view(B, 1, 1)
+
+        self.xt = (1.0 - t_view) * self.noise + t_view * self.latents
+        self.d = torch.zeros(B, device = self.device)
+        self.target = self.latents - self.noise
+        # Check inputs to DiT
+        if torch.isnan(self.xt).any():
+            print("NaN in xt")
+        if torch.isnan(self.text_emb).any():
+            print("NaN in text_emb")
+        if torch.isnan(self.target).any():
+            print("NaN in target")
+        self.pred = self.dit(
+            self.xt,
+            self.t,
+            self.d,
+            self.text_emb
+        )
+        # Check output of DiT and loss
+        if torch.isnan(self.pred).any():
+            print("NaN in pred")
+        self.loss = F.mse_loss(self.pred, self.target)
+        if torch.isnan(self.loss):
+            print("NaN in loss")
+        self.loss = F.mse_loss(self.pred, self.target)
+
+    def update(self):
+        if torch.isnan(self.loss):
+            print("NaN loss before backward, skipping step")
+            return OrderedDict()
+        self.zero_grad([self.opt_dit])
+        self.loss.backward()
+        self.clip_norm([self.dit], 0.5)
+        self.step([self.opt_dit])
+        self.scheduler_dit.step()
+
+        loss_logs = OrderedDict()
+        loss_logs["loss"] = self.loss.item()
+        return loss_logs
+
+    def save(self, file_name, ep, total_it, history = None, best_model_state = None):
+        state = {
+            "dit": best_model_state if best_model_state != None else self.dit.state_dict(),
+            "opt_dit": self.opt_dit.state_dict(),
+            "scheduler_dit": self.scheduler_dit.state_dict(),
+            "ep": ep,
+            "total_it": total_it,
+            "history": history
+        }
+        torch.save(state, file_name)
+
+    def resume(self, model_dir):
+        checkpoint = torch.load(model_dir, map_location=self.device)
+        self.dit.load_state_dict(checkpoint["dit"])
+        self.opt_dit.load_state_dict(checkpoint["opt_dit"])
+        self.scheduler_dit.load_state_dict(checkpoint["scheduler_dit"])
+        return checkpoint["ep"], checkpoint["total_it"], checkpoint["history"]
+
+    def train(self, train_dataloader, val_dataloader, plot_eval = None):
+        self.dit.to(self.device)
+        total_iters = self.opt.max_epoch * len(train_dataloader)
+
+        self.scheduler_dit = CosineAnnealingLR(self.opt_dit, T_max = total_iters, eta_min = 1e-5)
+
+        history = {
+            "train_loss": [],
+            "val_loss": [],
+        }
+        
+        print("Number of epochs:", self.opt.max_epoch)
+        print("Number of steps:", total_iters)
+
+        epoch = 0
+        it = 0
+        if self.opt.is_continue:
+            model_dir = pjoin(self.opt.model_dir, "latest.tar")
+            epoch, it, history = self.resume(model_dir)
+            print(f'Resuming training from previous checkpoint at epoch {epoch}')
+
+        start_time = time.time()
+        print("Iters Per Epoch, Training: %04d, Validation: %03d\n" %
+              (len(train_dataloader), len(val_dataloader)))
+
+        val_loss = 0
+        logs = OrderedDict()
+
+        # loss value init
+        train_loss_avg = 0
+        val_loss = 0
+        best_val = float("inf")
+        best_state = None
+        patience = 15
+        epochs_without_improve = 0
+        min_delta = 1e-3
+
+        while epoch < self.opt.max_epoch:
+            
+            train_loss_sum = 0.0
+            train_steps = 0
+            for i, batch_data in enumerate(train_dataloader):
+                self.dit.train()
+                self.forward(batch_data)
+                log_dict = self.update()
+
+                train_loss_sum += self.loss.item()
+                train_steps += 1
+
+                for k, v in log_dict.items():
+                    if k not in logs:
+                        logs[k] = v
+                    else:
+                        logs[k] += v
+
+                it += 1
+
+                if it % self.opt.log_every == 0:
+                    mean_loss = OrderedDict({"val_loss": val_loss})
+                    self.logger.scalar_summary("val_loss", val_loss, it)
+
+                    for tag, value in logs.items():
+                        self.logger.scalar_summary(tag, value / self.opt.log_every, it)
+                        mean_loss[tag] = value / self.opt.log_every
+
+                    logs = OrderedDict()
+                    #print_current_loss_decomp(start_time, it, total_iters, mean_loss, epoch, i)
+
+                if it % self.opt.save_latest == 0:
+                    self.save(pjoin(self.opt.model_dir, "latest.tar"), epoch, it, history)
+
+            #epoch += 1
+
+            train_loss_avg = train_loss_sum / max(train_steps, 1)
+
+            history["train_loss"].append(train_loss_avg)
+
+            #print("Validation time:")
+            val_loss = 0
+
+            with torch.no_grad():
+                self.dit.eval()
+                for i, batch_data in enumerate(val_dataloader):
+                    self.forward(batch_data)
+
+                    val_loss += self.loss.item()
+
+            denom = max(len(val_dataloader), 1)
+            val_loss /= denom
+            history["val_loss"].append(val_loss)
+
+
+            if best_val - val_loss > min_delta:
+                best_val = val_loss
+                best_state = self.dit.state_dict()
+                epochs_without_improve = 0
+            else:
+                epochs_without_improve += 1
+
+            if epochs_without_improve >= patience:
+                print(f"Early stopping at epoch {epoch}, best val {best_val:.4f}")
+                self.save(pjoin(self.opt.model_dir, "latest.tar"), epoch, total_it=it, history = history, best_model_state=best_state)
+                self.save_loss_data(history = history)
+                break
+
+            
+            if epoch % self.opt.save_every_e == 0:
+                self.save(pjoin(self.opt.model_dir, "E%04d.tar" % epoch), epoch, total_it=it, history = history)
+
+            if epoch % self.opt.eval_every_e == 0:
+                print("Epoch:", epoch)
+                print(
+                    "Train Loss: %.5f"
+                    % (train_loss_avg)
+                )
+                print(
+                    "Validation Loss: %.5f"
+                    % (val_loss)
+                )
+                #data = torch.cat([self.recon_motions_by_part, self.motions_by_part], dim=0).detach().cpu().numpy()
+                save_dir = pjoin(self.opt.eval_dir, "E%04d" % epoch)
+                os.makedirs(save_dir, exist_ok=True)
+                #plot_eval(data, save_dir)
+                self.save_loss_data(history = history)
+            
+            epoch += 1
+
+        print("Epoch:", epoch)
+        print(
+            "Train Loss: %.5f"
+            % (train_loss_avg)
+        )
+        print(
+            "Validation Loss: %.5f"
+            % (val_loss)
+        )
+        
+        self.save_loss_data(history = history)
+
