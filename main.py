@@ -45,7 +45,7 @@ if __name__ == "__main__":
     options.is_continue = False
     options.dataset_mode = "debug"
     options.batch_size = 64
-    options.model_filename = 'dit_basic_debug.tar'
+    options.model_filename = 'dit_basic_micro.tar'
 
     os.makedirs(options.model_dir, exist_ok=True)
     os.makedirs(options.meta_dir, exist_ok=True)

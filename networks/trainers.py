@@ -525,7 +525,7 @@ class MotionDiTTrainer(object):
         best_val = float("inf")
         best_state = None
         patience = 15
-        epochs_without_improve = 15
+        epochs_without_improve = 0
         min_delta = 1e-3
 
         while epoch < self.opt.max_epoch:
