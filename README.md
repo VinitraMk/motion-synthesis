@@ -35,17 +35,15 @@ These two branches provide the benchmark-vs-structured setup needed to study whe
 
 **Validation Sample 1**
 <br/>
-<img src="assets/vqvae_results/val_M004469_11.gif" alt="Alt text">
-<br/>
-<img src="assets/vqvae_results/val_M004469_11.gif" alt="Alt text">
+<img src="assets/vqvae_results/val_M004469_11.gif" alt="Alt text" width="48%">
+<img src="assets/vqvae_results/val_M004469_11.gif" alt="Alt text" width="48%">
 <br/>
 
 
 **Validation Sample 2**
 <br/>
-<img src="assets/vqvae_results/val_M009751_31.gif" alt="Alt text">
-<br/>
-<img src="assets/vqvae_results/val_M009751_31.gif" alt="Alt text">
+<img src="assets/vqvae_results/val_M009751_31.gif" alt="Alt text" width="48%">
+<img src="assets/vqvae_results/val_M009751_31.gif" alt="Alt text" width="48%">
 <br/>
 
 ### Basic Diffusion pipeline results
