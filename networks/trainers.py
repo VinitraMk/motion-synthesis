@@ -525,10 +525,11 @@ class MotionDiTTrainer(object):
         best_val = float("inf")
         best_state = None
         patience = 15
-        epochs_without_improve = 0
+        epochs_without_improve = 15
         min_delta = 1e-3
 
         while epoch < self.opt.max_epoch:
+            
             train_loss_sum = 0.0
             train_steps = 0
             for i, batch_data in enumerate(train_dataloader):
@@ -579,6 +580,8 @@ class MotionDiTTrainer(object):
 
             denom = max(len(val_dataloader), 1)
             val_loss /= denom
+            history["val_loss"].append(val_loss)
+
 
             if best_val - val_loss > min_delta:
                 best_val = val_loss
@@ -589,11 +592,10 @@ class MotionDiTTrainer(object):
 
             if epochs_without_improve >= patience:
                 print(f"Early stopping at epoch {epoch}, best val {best_val:.4f}")
-                self.save(pjoin(self.opt.model_dir, "latest.tar" % epoch), epoch, total_it=it, history = history, best_model_state=best_state)
+                self.save(pjoin(self.opt.model_dir, "latest.tar"), epoch, total_it=it, history = history, best_model_state=best_state)
                 self.save_loss_data(history = history)
                 break
 
-            history["val_loss"].append(val_loss)
             
             if epoch % self.opt.save_every_e == 0:
                 self.save(pjoin(self.opt.model_dir, "E%04d.tar" % epoch), epoch, total_it=it, history = history)
