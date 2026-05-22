@@ -118,8 +118,8 @@ class DiT(nn.Module):
         input_size, # latent dim size
         hidden_size=1152,
         text_dim=384,
-        depth=12,
-        num_heads=6,
+        depth=9,
+        num_heads=4,
         max_seq_len=10, # window size of the Dataset class
         mlp_ratio=4.0,
         learn_sigma=False,
