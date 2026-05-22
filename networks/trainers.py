@@ -524,8 +524,9 @@ class MotionDiTTrainer(object):
         val_loss = 0
         best_val = float("inf")
         best_state = None
-        patience = 10
+        patience = 15
         epochs_without_improve = 0
+        min_delta = 1e-3
 
         while epoch < self.opt.max_epoch:
             train_loss_sum = 0.0
@@ -579,7 +580,7 @@ class MotionDiTTrainer(object):
             denom = max(len(val_dataloader), 1)
             val_loss /= denom
 
-            if val_loss < best_val:
+            if best_val - val_loss > min_delta:
                 best_val = val_loss
                 best_state = self.dit.state_dict()
                 epochs_without_improve = 0
