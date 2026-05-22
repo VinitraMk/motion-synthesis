@@ -18,7 +18,7 @@ import json
 if __name__ == "__main__":
     # set training options
     parser = TrainOptions()
-    options = parser.parse(args = ['--max_epoch', '600', '--stage', 'generation', '--lr', '3e-4'])
+    options = parser.parse(args = ['--max_epoch', '600', '--stage', 'generation', '--lr', '3e-4', '--stage', 'generation'])
     options.gpu_id = torch.cuda.current_device() if torch.cuda.is_available() else -1
     options.device = torch.device("cpu" if options.gpu_id==-1 else "cuda:" + str(options.gpu_id))
     torch.autograd.set_detect_anomaly(True)
@@ -38,14 +38,18 @@ if __name__ == "__main__":
     options.meta_dir = pjoin(options.save_root, 'meta')
     options.eval_dir = pjoin(options.save_root, 'animation')
     options.log_dir = pjoin('./log', options.dataset_name, options.name)
-    options.experiment_dir = './exp_results/onestep-diffusion-setup/init'
+    options.experiment_dir = './exp_results/onestep-diffusion-setup/finetune'
+    #options.experiment_dir = './exp_results/vq-vae-setup/beta_0.1_full'
     options.output_dir = options.experiment_dir
     options.save_every_e = 5
     options.is_train = False
     options.is_continue = False
     options.dataset_mode = "debug"
     options.batch_size = 64
-    options.model_filename = 'dit_basic_micro.tar'
+    if not(options.is_train) and options.stage == "autoencoder":
+        options.model_filename = 'vqvae_beta_0.1_full_v0.tar'
+    elif not(options.is_train) and options.stage == "generation":
+        options.model_filename = 'dit_debug_trans_9_atten_4.tar'
 
     os.makedirs(options.model_dir, exist_ok=True)
     os.makedirs(options.meta_dir, exist_ok=True)

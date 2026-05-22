@@ -566,6 +566,7 @@ def render_skeleton_animation(
     joints_recon: np.ndarray,
     output_path_no_ext: str,
     clip_id: str,
+    joints_baseline: np.ndarray = None,
     text = None,
     skeleton_edges=HUMANML3D_SKELETON_EDGES,
     fps: int = 20,
@@ -582,20 +583,33 @@ def render_skeleton_animation(
     #num_frames = joints_gt.shape[0]
     joints_gt = joints_gt[:num_frames]
     joints_recon = joints_recon[:num_frames]
+    if joints_baseline != None:
+        joints_baseline = np.asarray(joints_baseline)
+        joints_baseline = joints_baseline[:num_frames]
 
-    fig = plt.figure(figsize=(10, 5))
-    ax1 = fig.add_subplot(121, projection='3d')
-    ax2 = fig.add_subplot(122, projection='3d')
+    if isinstance(joints_baseline, np.ndarray):
+        fig = plt.figure(figsize=(15, 5))
+    else:
+        fig = plt.figure(figsize=(10, 5))
+    ax1 = fig.add_subplot(131, projection='3d')
+    ax2 = fig.add_subplot(132, projection='3d')
+    if isinstance(joints_baseline, np.ndarray):
+        ax3 = fig.add_subplot(133, projection='3d')
     caption = text if text else clip_id
     fig.suptitle(caption, fontsize = 12, y = 0.98)
-
-    xyz_all = np.concatenate([joints_gt.reshape(-1, 3), joints_recon.reshape(-1, 3)], axis=0)
+    if isinstance(joints_baseline, np.ndarray):
+        xyz_all = np.concatenate([joints_gt.reshape(-1, 3), joints_recon.reshape(-1, 3), joints_baseline.reshape(-1, 3)], axis=0)
+    else:
+        xyz_all = np.concatenate([joints_gt.reshape(-1, 3), joints_recon.reshape(-1, 3)], axis=0)
 
     def update(frame_idx):
         _draw_skeleton_frame(ax1, joints_gt[frame_idx], skeleton_edges, f"GT frame={frame_idx}")
-        _draw_skeleton_frame(ax2, joints_recon[frame_idx], skeleton_edges, f"Recon frame={frame_idx}")
+        _draw_skeleton_frame(ax2, joints_recon[frame_idx], skeleton_edges, f"Part-Aware VQVAE frame={frame_idx}")
         _set_equal_3d_axes(ax1, xyz_all)
         _set_equal_3d_axes(ax2, xyz_all)
+        if isinstance(joints_baseline, np.ndarray):
+            _draw_skeleton_frame(ax3, joints_baseline[frame_idx], skeleton_edges, f"Baseline VAE frame={frame_idx}")
+            _set_equal_3d_axes(ax3, xyz_all)
         return []
 
     anim = FuncAnimation(fig, update, frames=num_frames, interval=max(1, int(1000 / fps)), blit=False)
