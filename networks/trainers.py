@@ -473,9 +473,9 @@ class MotionDiTTrainer(object):
         loss_logs["loss"] = self.loss.item()
         return loss_logs
 
-    def save(self, file_name, ep, total_it, history = None):
+    def save(self, file_name, ep, total_it, history = None, best_model_state = None):
         state = {
-            "dit": self.dit.state_dict(),
+            "dit": best_model_state if best_model_state != None else self.dit.state_dict(),
             "opt_dit": self.opt_dit.state_dict(),
             "scheduler_dit": self.scheduler_dit.state_dict(),
             "ep": ep,
@@ -522,6 +522,10 @@ class MotionDiTTrainer(object):
         # loss value init
         train_loss_avg = 0
         val_loss = 0
+        best_val = float("inf")
+        best_state = None
+        patience = 10
+        epochs_without_improve = 0
 
         while epoch < self.opt.max_epoch:
             train_loss_sum = 0.0
@@ -574,6 +578,19 @@ class MotionDiTTrainer(object):
 
             denom = max(len(val_dataloader), 1)
             val_loss /= denom
+
+            if val_loss < best_val:
+                best_val = val_loss
+                best_state = self.dit.state_dict()
+                epochs_without_improve = 0
+            else:
+                epochs_without_improve += 1
+
+            if epochs_without_improve >= patience:
+                print(f"Early stopping at epoch {epoch}, best val {best_val:.4f}")
+                self.save(pjoin(self.opt.model_dir, "latest.tar" % epoch), epoch, total_it=it, history = history, best_model_state=best_state)
+                self.save_loss_data(history = history)
+                break
 
             history["val_loss"].append(val_loss)
             
