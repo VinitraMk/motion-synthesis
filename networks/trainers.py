@@ -339,18 +339,38 @@ class MotionDiTTrainer(object):
 
         self.dit = dit.to(self.device)
 
-        self.opt_dit = torch.optim.Adam(
-            self.dit.parameters(),
+        weight_decay = 1e-3
+        param_groups = self._get_param_groups(model = self.dit, weight_decay=weight_decay)
+
+        self.opt_dit = torch.optim.AdamW(
+            param_groups,
             lr=args.lr,
             betas=(0.9, 0.999),
             weight_decay=1e-4
         )
 
-
         self.vae = None
         self.text_encoder = get_pretrained_text_encoder(self.device)
 
         self._init_vae(autoencoder_type)
+
+    def _get_param_groups(self, model: DiT, weight_decay: float = 1e-4):
+        decay_params = []
+        no_decay_params = []
+
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            # 1D params are usually biases or norm weights -> no weight decay
+            if param.ndim == 1 or name.endswith(".bias"):
+                no_decay_params.append(param)
+            else:
+                decay_params.append(param)
+
+        return [
+            {"params": decay_params, "weight_decay": weight_decay},
+            {"params": no_decay_params, "weight_decay": 0.0},
+        ]
 
     def _init_vae(self, autoencoder_type: str):
         if autoencoder_type == "pretrained_vae":
