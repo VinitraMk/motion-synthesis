@@ -6,7 +6,7 @@ class TrainOptions():
         self.initialized = False
     
     def initialize(self):
-        every_e_interval = 20
+        every_e_interval = 10
         self.parser.add_argument('--name', type = str, default = 'test', help = 'Name of the trial')
         self.parser.add_argument('--checkpoints_dir', type = str, default = './checkpoints', help = 'Models and other data are saved here')
         self.parser.add_argument('--experiment_dir', type = str, default = './exp_results/vq-vae-setup', help = 'Save experiment loss logs and reports')
@@ -24,7 +24,7 @@ class TrainOptions():
         self.parser.add_argument('--eval_every_e', type=int, default=every_e_interval, help='Frequency of animation results (by epoch)')
         self.parser.add_argument('--is_continue', action="store_true", help='Is this trail continued from previous trail?')
         self.parser.add_argument('--max_epoch', type=int, default=2000, help='Training iterations')
-        self.parser.add_argument('--save_latest', type=int, default=every_e_interval, help='Frequency of saving models (by iteration)')
+        self.parser.add_argument('--save_latest', type=int, default=1, help='Frequency of saving models (by iteration)')
         self.parser.add_argument('--dataset_mode', type=str, default="micro", help='Frequency of saving models (by iteration)')
         self.parser.add_argument('--stage', type=str, default = 'generation', help = 'Stage of the pipeline (autoencoder or generation)')
         self.initialized = True
