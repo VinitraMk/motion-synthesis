@@ -31,29 +31,42 @@ These two branches provide the benchmark-vs-structured setup needed to study whe
 
 ## Outputs So Far
 
-### Results from Part-aware VQVAE
+### Decoded results from Part-aware VQVAE vs Pretrained VAE from HumanML3D
 
-**Validation samples**
+**Validation Sample 1**
 <br/>
 <img src="assets/vqvae_results/val_M004469_11.gif" alt="Alt text">
+<br/>
+<img src="assets/vqvae_results/val_M004469_11.gif" alt="Alt text">
+<br/>
+
+
+**Validation Sample 2**
+<br/>
+<img src="assets/vqvae_results/val_M009751_31.gif" alt="Alt text">
 <br/>
 <img src="assets/vqvae_results/val_M009751_31.gif" alt="Alt text">
 <br/>
 
+### Basic Diffusion pipeline results
+<br/>
+<img src="assets/dit_results/prevae_train_M007111_28.gif" alt="Alt text">
+<br/>
+<img src="assets/dit_results/prevae_val_M009751_31.gif" alt="Alt text">
+<br/>
 
-**Interpolation samples**
-<br/>
-<img src="assets/vqvae_results/interpolated_M012808_000134_0.gif" alt="Alt text">
-<br/>
-<img src="assets/vqvae_results/interpolated_M012808_000134_4.gif" alt="Alt text">
-<br>
 
 ## Interpretation of Current Results
+
+### Part-aware VQVAE
 Current results show that the part-based VQ-VAE is already learning useful structure: validation reconstructions are meaningful, and interpolation samples suggest that the latent space captures non-trivial motion variation. At the same time, some outputs contain visible artifacts such as jitter or weak coordination across body regions, which suggests that the current representation is stronger at capturing local part behavior than full-body global context.
 
 The current interpretation is that these artifacts are not only an optimization issue, but also an architectural one. With a relatively simple part-based encoder-decoder, each part can be modeled reasonably well in isolation, but the model has limited capacity to enforce smooth temporal consistency and coherent cross-part motion over longer ranges.
 
 The planned improvement is to treat the current VQ-VAE as a useful first step rather than a final editing backbone. The next iteration should strengthen the part-based autoencoding pipeline with better multi-scale temporal context and stronger coordination across parts, while keeping the latent structure suitable for masking and controlled editing in the diffusion stage.
+
+### Diffusion model
+The Diffusion model consists of a transformer backend or DiT. The model has been trained on a very small nano set as an initial sanity check to validate the model code. The samples generated exhibit typical behaviour from an overfit pipeline, showing strong results for train set samples (Figure 1). More iterations are in progress to finalize the hyperparameters and train the DiT on the full dataset. Followed by this, we will proceed with one-step or few-step diffusion study.
 
 ## Immediate Next Steps
 - Architectural improvement to be implemented to correct the jitters and other artifacts observed in the decoded samples.

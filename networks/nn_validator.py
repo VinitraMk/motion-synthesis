@@ -604,7 +604,7 @@ class DiffusionValidator:
         return motion * self.std + self.mean
 
     @torch.no_grad()
-    def _get_result_from_dit(self, x: torch.Tensor, random_sample_idx: int, clip_id: str, sample_id: str, sample_text: str, full_text: str = ""):
+    def _get_result_from_dit(self, x: torch.Tensor, clip_id: str, sample_id: str, sample_text: str, full_text: str = ""):
         #x = batch_motion_parts[random_sample_idx].unsqueeze(0).float()
         latents = self.pretrained_movementenc(x[:, :, :-4]).clone()
         text_emb = self.text_encoder.encode(
@@ -784,7 +784,6 @@ class DiffusionValidator:
                 #)
                 row_motion = self._get_result_from_dit(
                     x = x_motion,
-                    random_sample_idx=random_sample_idx,
                     clip_id=clip_ids[random_sample_idx],
                     sample_id = pret_sample_id,
                     sample_text=batch_text[random_sample_idx],
