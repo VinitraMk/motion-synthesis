@@ -18,7 +18,7 @@ import json
 if __name__ == "__main__":
     # set training options
     parser = TrainOptions()
-    options = parser.parse(args = ['--max_epoch', '600', '--stage', 'generation', '--lr', '3e-4', '--stage', 'generation'])
+    options = parser.parse(args = ['--max_epoch', '600', '--stage', 'generation', '--lr', '3e-4'])
     options.gpu_id = torch.cuda.current_device() if torch.cuda.is_available() else -1
     options.device = torch.device("cpu" if options.gpu_id==-1 else "cuda:" + str(options.gpu_id))
     torch.autograd.set_detect_anomaly(True)
@@ -49,7 +49,7 @@ if __name__ == "__main__":
     if not(options.is_train) and options.stage == "autoencoder":
         options.model_filename = 'vqvae_beta_0.1_full_v0.tar'
     elif not(options.is_train) and options.stage == "generation":
-        options.model_filename = 'dit_debug_trans_9_atten_4.tar'
+        options.model_filename = 'dit_full_v0.tar'
 
     os.makedirs(options.model_dir, exist_ok=True)
     os.makedirs(options.meta_dir, exist_ok=True)
