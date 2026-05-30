@@ -41,84 +41,27 @@ class MotionPipeline:
         self.d_part_max = mapping['d_part_max']
         self.joints_num = mapping['joints_num']
 
-        self._init_noise_schedule()
 
     def denormalize_motion(self, motion):
         return motion * self.std + self.mean
     
-    def _init_noise_schedule(self):
-        betas = torch.linspace(
-            self.beta_start,
-            self.beta_end,
-            self.num_train_timesteps,
-            dtype=torch.float32,
-            device=self.device,
-        )
-        alphas = 1.0 - betas
-        alphas_cumprod = torch.cumprod(alphas, dim=0)
-
-        self.betas = betas
-        self.alphas = alphas
-        self.alphas_cumprod = alphas_cumprod
-
-    def _set_inference_timesteps(self, num_inference_steps):
-        timesteps = torch.linspace(
-            self.num_train_timesteps - 1,
-            0,
-            num_inference_steps,
-            dtype=torch.long,
-            device=self.device,
-        )
-        self.timesteps = timesteps
-
-    def _ddim_step(self, eps_pred, t, t_prev, sample, eta=0.0):
-        alpha_bar_t = self.alphas_cumprod[t]
-        alpha_bar_prev = (
-            self.alphas_cumprod[t_prev]
-            if t_prev >= 0
-            else torch.tensor(1.0, device=sample.device, dtype=sample.dtype)
-        )
-
-        sqrt_alpha_bar_t = torch.sqrt(alpha_bar_t)
-        sqrt_one_minus_alpha_bar_t = torch.sqrt(1.0 - alpha_bar_t)
-
-        pred_x0 = (sample - sqrt_one_minus_alpha_bar_t * eps_pred) / sqrt_alpha_bar_t
-
-        sigma_t = (
-            eta
-            * torch.sqrt((1.0 - alpha_bar_prev) / (1.0 - alpha_bar_t))
-            * torch.sqrt(1.0 - alpha_bar_t / alpha_bar_prev)
-            if t_prev >= 0
-            else torch.tensor(0.0, device=sample.device, dtype=sample.dtype)
-        )
-
-        dir_xt = torch.sqrt(torch.clamp(1.0 - alpha_bar_prev - sigma_t**2, min=0.0)) * eps_pred
-
-        if t_prev >= 0 and eta > 0:
-            noise = torch.randn_like(sample)
-            prev_sample = torch.sqrt(alpha_bar_prev) * pred_x0 + dir_xt + sigma_t * noise
-        else:
-            prev_sample = torch.sqrt(alpha_bar_prev) * pred_x0 + dir_xt
-
-        return prev_sample
-
     @torch.no_grad()
-    def __call__(self, prompt, num_inference_steps=50, seed=42, latent_shape=(1, 512), eta = 0.0):
-        generator = torch.Generator(device=self.device).manual_seed(seed)
-        self._set_inference_timesteps(num_inference_steps=num_inference_steps)
+    def __call__(self, prompt, generator, num_inference_steps=50, seed=42, latent_shape=(1, 512), eta = 0.0):
+        #generator = torch.Generator(device=self.device).manual_seed(seed)
 
         z = torch.randn(latent_shape, generator=generator, device=self.device)
 
         cond = self.text_embedder.encode(prompt, convert_to_tensor = True, device = str(self.device)).clone()
+        print(prompt, cond.shape, cond.norm().item(), num_inference_steps)
+        t_values = torch.linspace(1.0, 0.0, steps=num_inference_steps, device=self.device)
 
-        for i, t in enumerate(self.timesteps):
-            t_int = int(t.item())
-            t_prev = int(self.timesteps[i + 1].item()) if i + 1 < len(self.timesteps) else -1
-
-            t_batch = torch.full((z.shape[0],), t_int, device=self.device, dtype=torch.long)
+        for d_step in range(num_inference_steps):
+            t = torch.full((z.shape[0], ), fill_value = d_step / (num_inference_steps - 1), device = self.device)
+            t = t.clamp(1e-4, 1.0)
             d = torch.zeros(z.shape[0], device=self.device)
-            eps = self.dit(z, t_batch, d, cond)
-            z = self._ddim_step(eps, t_int, t_prev, z, eta=eta)
+            v = self.dit(z, t, d, cond)
+            alpha = 1.0 / num_inference_steps
+            z = z + alpha * v
 
         motion = self.decoder(z)
         denormalized_motion = self.denormalize_motion(motion[0])
@@ -134,7 +77,7 @@ def parse_args():
     parser.add_argument("--checkpoints_dir", type=str, default="checkpoints")
     parser.add_argument("--meta_dir", type=str, default="checkpoints/HumanML3D/test/meta")
     parser.add_argument("--gif_name", type=str, default="sample.gif")
-    parser.add_argument("--num_steps", type=int, default=10)
+    parser.add_argument("--num_steps", type=int, default=50)
     parser.add_argument("--guidance_scale", type=float, default=7.5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="cpu")
@@ -193,6 +136,7 @@ def render_skeleton_animation(
     num_frames = joints_recon.shape[0]
     joints_recon = joints_recon[:num_frames]
     recon_caption = recon_caption if recon_caption != "" else "Recon"
+    plt.clf()
     fig = plt.figure(figsize=(8, 5))
     ax = fig.add_subplot(111, projection='3d')
         
@@ -239,8 +183,11 @@ def render_skeleton_animation(
 def run_inference(pipe, prompt, num_steps, seed, device, outputs_path):
 
     # Replace this call with your actual pipeline invocation
+    #prompt = 'run'
+    gen = torch.Generator(device).manual_seed(0)
     result = pipe(
         prompt=prompt,
+        generator = gen,
         num_inference_steps=num_steps
     )
 
@@ -254,6 +201,25 @@ def run_inference(pipe, prompt, num_steps, seed, device, outputs_path):
         text = prompt,
         recon_caption='Diffusion inference'
     )
+
+    #prompt = 'walk'
+    #gen = torch.Generator(device).manual_seed(0)
+    #result = pipe(
+        #prompt=prompt,
+        #generator = gen,
+        #num_inference_steps=num_steps
+    #)
+
+    #motion_joints = result
+    #all_gif_files = [fname for fname in os.listdir(outputs_path) if ".gif" in fname]
+    #file_id = len(all_gif_files)
+    #render_skeleton_animation(
+        #joints_recon=motion_joints,
+        #output_path_no_ext=pjoin(outputs_path, f'inference_test_clip_{file_id}'),
+        #clip_id=f'inference_test_clip_{file_id}',
+        #text = prompt,
+        #recon_caption='Diffusion inference'
+    #)
 
 
 def main():

@@ -44,11 +44,9 @@ These two branches provide the benchmark-vs-structured setup needed to study whe
 <img src="assets/vqvae_results/val_M009751_31.gif" alt="Alt text">
 <br/>
 
-### Basic Diffusion pipeline results
+### Basic Diffusion pipeline inference results
 <br/>
-<img src="assets/dit_results/prevae_train_M007111_28.gif" alt="Alt text">
-<br/>
-<img src="assets/dit_results/prevae_val_M009751_31.gif" alt="Alt text">
+<img src="assets/dit_results/inference_0.gif" alt="Alt text">
 <br/>
 
 

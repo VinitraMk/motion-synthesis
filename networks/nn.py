@@ -193,7 +193,7 @@ class DiT(nn.Module):
     def forward(self, x, t, d, y):
         """
         Forward pass of DiT.
-        x: (N, T, D_latent) tensor of temporal inputs (latent representations of motion)
+        x: (N, T, C_latent) tensor of temporal inputs (latent representations of motion)
         t: (N,) tensor of diffusion timesteps
         d: (N,) tensor of diffusion steps
         y: (N, D_text) tensor of text conditions
