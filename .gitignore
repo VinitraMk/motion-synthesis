@@ -6,5 +6,5 @@ checkpoints/
 .ipynb_checkpoints/
 exp_results/*
 log/*
-output/*
+outputs/
 .vscode

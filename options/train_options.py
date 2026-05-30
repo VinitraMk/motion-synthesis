@@ -6,7 +6,7 @@ class TrainOptions():
         self.initialized = False
     
     def initialize(self):
-        every_e_interval = 10
+        every_e_interval = 1
         self.parser.add_argument('--name', type = str, default = 'test', help = 'Name of the trial')
         self.parser.add_argument('--checkpoints_dir', type = str, default = './checkpoints', help = 'Models and other data are saved here')
         self.parser.add_argument('--experiment_dir', type = str, default = './exp_results/vq-vae-setup', help = 'Save experiment loss logs and reports')
@@ -18,7 +18,7 @@ class TrainOptions():
         self.parser.add_argument('--feat_bias', type=float, default=5, help='Layers of GRU')
         self.parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
         self.parser.add_argument('--log_every', type=int, default=every_e_interval, help='Frequency of printing training progress (by iteration)')
-        self.parser.add_argument('--save_every_e', type=int, default=20, help='Frequency of saving models (by epoch)')
+        self.parser.add_argument('--save_every_e', type=int, default=2, help='Frequency of saving models (by epoch)')
         self.parser.add_argument('--eval_every_e', type=int, default=every_e_interval, help='Frequency of animation results (by epoch)')
         self.parser.add_argument('--is_continue', action="store_true", help='Is this trail continued from previous trail?')
         self.parser.add_argument('--max_epoch', type=int, default=2000, help='Training iterations')
