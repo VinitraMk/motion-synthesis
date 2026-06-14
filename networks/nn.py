@@ -4,6 +4,9 @@ from torch.nn import functional as F
 import torch
 from networks.transformer_modules import ScalarCondEmbedder, TextEmbedder, DiTBlock, FinalLayer, get_1d_sincos_pos_embed_from_grid
 import numpy as np
+from transformers import AutoTokenizer, AutoModel
+
+# motion nn
 
 class MotionVQVAE(nn.Module):
     """
@@ -135,7 +138,8 @@ class DiT(nn.Module):
         self.x_embedder = nn.Linear(input_size, hidden_size, bias = True)
         self.t_embedder = ScalarCondEmbedder(hidden_size)
         self.d_embedder = ScalarCondEmbedder(hidden_size)
-        self.y_embedder = TextEmbedder(text_dim = text_dim, hidden_size=hidden_size)
+        #self.y_embedder = TextEmbedder(text_dim = text_dim, hidden_size=hidden_size)
+        self.text_proj = nn.Linear(text_dim, hidden_size, bias = True)
 
         # Will use fixed sin-cos embedding:
         self.pos_embed = nn.Parameter(
@@ -190,22 +194,24 @@ class DiT(nn.Module):
         nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)
 
-    def forward(self, x, t, d, y):
+    def forward(self, x, t, d, text_tokens, text_mask = None):
         """
         Forward pass of DiT.
         x: (N, T, C_latent) tensor of temporal inputs (latent representations of motion)
         t: (N,) tensor of diffusion timesteps
         d: (N,) tensor of diffusion steps
-        y: (N, D_text) tensor of text conditions
+        text_tokens: (N, L_text) tensor of text tokens
+        text_mask: (N, L_text) tensor of text masks
         """
         #print('x shapes: ', x.size(), self.x_embedder(x).size(), self.pos_embed.size())
         x = self.x_embedder(x) + self.pos_embed  # (N, T, C_latent),
         t = self.t_embedder(t)                   # (N, C_latent)
         d = self.d_embedder(d)                   # (N, C_latent)
-        y = self.y_embedder(y)                   # (N, C_latent)
-        c = t + d + y                            # (N, C_latent)
+        c = t + d                                # (N, C_latent)
+
+        text_ctx = self.text_proj(text_tokens)
         for block in self.blocks:
-            x = block(x, c)                      # (N, T, C_latent)
+            x = block(x, c, text_ctx, text_mask) # (N, T, C_latent)
         x = self.final_layer(x, c)               # (N, T, D_latent)
         return x
 

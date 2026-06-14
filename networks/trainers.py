@@ -12,6 +12,7 @@ from networks.nn import MotionVQVAE, DiT
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from networks.autoencoder_modules import MovementConvEncoder, MovementConvDecoder
 from utils.pretrained_model_utils import get_pretrained_vae, get_pretrained_text_encoder
+from networks.nn import TextEmbedder
 
 class Logger(object):
   def __init__(self, log_dir):
@@ -350,7 +351,11 @@ class MotionDiTTrainer(object):
         )
 
         self.vae = None
-        self.text_encoder = get_pretrained_text_encoder(self.device)
+        #self.text_encoder = get_pretrained_text_encoder(self.device)
+        self.text_encoder = TextEmbedder(
+            text_dim = self.opt.dim_txt_hidden,
+            hidden_size = self.opt.dim_txt_hidden
+        ).to(self.device)
 
         self._init_vae(autoencoder_type)
 
@@ -422,13 +427,16 @@ class MotionDiTTrainer(object):
         texts = batch_data['text']
         with torch.no_grad():
             latents = self.encoder(motions[:, :, :-4])
-            text_emb = self.text_encoder.encode(
-                texts,
-                convert_to_tensor = True,
-                device = str(self.device)
-            ).float()
+            #text_emb = self.text_encoder.encode(
+                #texts,
+                #convert_to_tensor = True,
+                #device = str(self.device)
+            #).float()
+            text_tokens, text_mask = self.text_encoder.encode_tokens(texts)
         self.latents = latents.clone() # to ensure that inference tensors are not created
-        self.text_emb = text_emb.clone() # to ensure that inference tensors are not created
+        #self.text_emb = text_emb.clone() # to ensure that inference tensors are not created
+        self.text_tokens = text_tokens.clone()
+        self.text_mask = text_mask.clone()
 
         self.noise = torch.randn_like(self.latents)
         B = self.latents.shape[0]
@@ -441,22 +449,20 @@ class MotionDiTTrainer(object):
         # Check inputs to DiT
         if torch.isnan(self.xt).any():
             print("NaN in xt")
-        if torch.isnan(self.text_emb).any():
-            print("NaN in text_emb")
+        if torch.isnan(self.text_tokens).any():
+            print("NaN in text_tokens")
         if torch.isnan(self.target).any():
             print("NaN in target")
         self.pred = self.dit(
             self.xt,
             self.t,
             self.d,
-            self.text_emb
+            self.text_tokens,
+            text_mask = self.text_mask
         )
         # Check output of DiT and loss
         if torch.isnan(self.pred).any():
             print("NaN in pred")
-        self.loss = F.mse_loss(self.pred, self.target)
-        if torch.isnan(self.loss):
-            print("NaN in loss")
         self.loss = F.mse_loss(self.pred, self.target)
 
     def update(self):

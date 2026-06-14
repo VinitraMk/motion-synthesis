@@ -14,7 +14,7 @@ import torch.nn as nn
 import numpy as np
 import math
 from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
-
+from transformers import AutoTokenizer, AutoModel
 
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
@@ -75,32 +75,107 @@ class TextEmbedder(nn.Module):
     def forward(self, text_emb):
         return self.proj(text_emb)
 
+
+# text encoder
+class TextTokenEncoder(nn.Module):
+    def __init__(self, model_name = "sentence-transformers/all-MiniLM-L6-v2", device = "cuda"):
+        super().__init__()
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModel.from_pretrained(model_name)
+        self.device = torch.device(device)
+        self.model.to(self.device)
+        self.model.eval()
+
+    @torch.no_grad()
+    def encode_tokens(self, texts):
+        inputs = self.tokenizer(
+            texts,
+            padding = True,
+            truncation = True,
+            return_tensors = "pt"
+        ).to(self.device)
+        outputs = self.model(**inputs)
+        return outputs.last_hidden_state, inputs.attention_mask
+
+class CrossAttention(nn.Module):
+    def __init__(self, dim, num_heads = 8, context_dim = None, dropout = 0.1):
+        super().__init__()
+        self.dim = dim
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim ** -0.5
+
+        context_dim = context_dim or dim
+        self.to_q = nn.Linear(dim, dim, bias = False)
+        self.to_k = nn.Linear(context_dim, dim, bias = False)
+        self.to_v = nn.Linear(context_dim, dim, bias = False)
+        self.to_out = nn.Linear(dim, dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, context, mask = None):
+        B, N, C = x.shape
+        _, M, _ = context.shape
+        q = self.to_q(x).view(B, N, self.num_heads, self.head_dim).transpose(1, 2)
+        k = self.to_k(context).view(B, M, self.num_heads, self.head_dim).transpose(1, 2)
+        v = self.to_v(context).view(B, M, self.num_heads, self.head_dim).transpose(1, 2)
+
+        attn_scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale
+
+        if mask is not None:
+            mask = mask[:, None, None, :].to(dtype = torch.bool)
+            attn_scores = attn_scores.masked_fill(~mask, float('-inf'))
+
+        attn_weights = torch.softmax(attn_scores, dim=-1)
+        attn_weights = self.dropout(attn_weights)
+
+        out = torch.matmul(attn_weights, v)
+        out = out.transpose(1, 2).contiguous().view(B, N, C)
+        return self.to_out(out)
+
+
 #################################################################################
-#                                 Core DiT Model                                #
+#                                 Core DiT Model Block                          #
 #################################################################################
 
 class DiTBlock(nn.Module):
     """
     A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
     """
-    def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, **block_kwargs):
+    def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, context_dim = None):
         super().__init__()
         self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
-        self.attn_drop = nn.Dropout(0.1)
+        #self.attn = CrossAttention(hidden_size, num_heads=num_heads, context_dim=context_dim, dropout=0.1)
+        self.self_attn = Attention(hidden_size, num_heads = num_heads, qkv_bias = True, attn_drop = 0.1, proj_drop = 0.1)
+        #self.attn_drop = nn.Dropout(0.1)
         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.cross_attn = CrossAttention(hidden_size, num_heads=num_heads, context_dim=context_dim, dropout=0.1)
+        self.norm3 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
-        approx_gelu = lambda: nn.GELU(approximate="tanh")
-        self.mlp = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0.1)
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(hidden_size, 6 * hidden_size, bias=True)
+        #approx_gelu = lambda: nn.GELU(approximate="tanh")
+        #self.mlp = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0.1)
+        #self.adaLN_modulation = nn.Sequential(
+            #nn.SiLU(),
+            #nn.Linear(hidden_size, 6 * hidden_size, bias=True)
+        #)
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_size, mlp_hidden_dim, bias=True),
+            nn.GELU(),
+            nn.Linear(mlp_hidden_dim, hidden_size, bias=True)
         )
+        self.cond_proj = nn.Linear(context_dim, 6 * hidden_size, bias=True)
 
-    def forward(self, x, c):
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
-        x = x + self.attn_drop(gate_msa.unsqueeze(1) * self.attn(modulate(self.norm1(x), shift_msa, scale_msa)))
-        x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
+    def modulate(self, x, shift, scale):
+        return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+
+    def forward(self, x, c, text_ctx, text_mask = None):
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.cond_proj(c).chunk(6, dim=1)
+        h = self.modulate(self.norm1(x), shift_msa, scale_msa)
+        x = x + gate_msa.unsqueeze(1) * self.self_attn(h)
+
+        h_cross = self.modulate(self.norm3(x), shift_msa, scale_msa)
+        x = x + gate_msa.unsqueeze(1) * self.cross_attn(h_cross, text_ctx, mask = text_mask)
+
+        x = x + self.mlp(self.norm3(x))
         return x
 
 
