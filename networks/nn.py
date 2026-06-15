@@ -172,10 +172,8 @@ class DiT(nn.Module):
         nn.init.constant_(self.x_embedder.bias, 0)
 
         # Initialize label embedding table:
-        for layer in self.y_embedder.proj:
-            if isinstance(layer, nn.Linear):
-                nn.init.normal_(layer.weight, std=0.02)
-                nn.init.constant_(layer.bias, 0)
+        nn.init.normal_(self.text_proj.weight, std=0.02)
+        nn.init.constant_(self.text_proj.bias, 0)
 
         # Initialize timestep embedding MLP:
         nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
@@ -184,9 +182,11 @@ class DiT(nn.Module):
         nn.init.normal_(self.d_embedder.mlp[2].weight, std=0.02)
 
         # Zero-out adaLN modulation layers in DiT blocks:
+        '''
         for block in self.blocks:
             nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
             nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+        '''
 
         # Zero-out output layers:
         nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)

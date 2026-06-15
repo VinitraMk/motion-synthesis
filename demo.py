@@ -4,6 +4,7 @@ from pathlib import Path
 from os.path import join as pjoin
 import torch
 from networks.nn import DiT
+from networks.transformer_modules import TextTokenEncoder
 from utils.pretrained_model_utils import get_pretrained_vae, get_pretrained_text_encoder
 import numpy as np
 import json
@@ -51,15 +52,16 @@ class MotionPipeline:
 
         z = torch.randn(latent_shape, generator=generator, device=self.device)
 
-        cond = self.text_embedder.encode(prompt, convert_to_tensor = True, device = str(self.device)).clone()
-        print(prompt, cond.shape, cond.norm().item(), num_inference_steps)
+        #cond = self.text_embedder.encode(prompt, convert_to_tensor = True, device = str(self.device)).clone()
+        text_tokens, text_mask = self.text_embedder.encode_tokens([prompt])
+        print(prompt, num_inference_steps)
         t_values = torch.linspace(1.0, 0.0, steps=num_inference_steps, device=self.device)
 
         for d_step in range(num_inference_steps):
             t = torch.full((z.shape[0], ), fill_value = d_step / (num_inference_steps - 1), device = self.device)
             t = t.clamp(1e-4, 1.0)
             d = torch.zeros(z.shape[0], device=self.device)
-            v = self.dit(z, t, d, cond)
+            v = self.dit(z, t, d, text_tokens, text_mask)
             alpha = 1.0 / num_inference_steps
             z = z + alpha * v
 
@@ -94,9 +96,11 @@ def load_models(device, checkpoints_dir, meta_dir):
     enc, dec = get_pretrained_vae(checkpoint_dir=checkpoints_dir)
     enc.eval()
     dec.eval()
-    text_embedder = get_pretrained_text_encoder(device)
+    #text_embedder = get_pretrained_text_encoder(device)
+    #text_embedder.eval()
+    text_embedder = TextTokenEncoder(device = device).to(device)
     text_embedder.eval()
-    dit_chkpt = torch.load(pjoin(checkpoints_dir, 'model/dit_full_v0.tar'), map_location = device)
+    dit_chkpt = torch.load(pjoin(checkpoints_dir, 'model/dit_crossattn_micro.tar'), map_location = device)
     dit = DiT(
         input_size = 512,
         hidden_size=1152,

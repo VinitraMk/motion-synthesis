@@ -12,7 +12,7 @@ from networks.nn import MotionVQVAE, DiT
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from networks.autoencoder_modules import MovementConvEncoder, MovementConvDecoder
 from utils.pretrained_model_utils import get_pretrained_vae, get_pretrained_text_encoder
-from networks.nn import TextEmbedder
+from networks.transformer_modules import TextTokenEncoder
 
 class Logger(object):
   def __init__(self, log_dir):
@@ -352,10 +352,7 @@ class MotionDiTTrainer(object):
 
         self.vae = None
         #self.text_encoder = get_pretrained_text_encoder(self.device)
-        self.text_encoder = TextEmbedder(
-            text_dim = self.opt.dim_txt_hidden,
-            hidden_size = self.opt.dim_txt_hidden
-        ).to(self.device)
+        self.text_encoder = TextTokenEncoder(device = self.device).to(self.device)
 
         self._init_vae(autoencoder_type)
 
