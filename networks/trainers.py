@@ -227,6 +227,7 @@ class MotionVQVAETrainer(object):
 
                 it += 1
 
+                '''
                 if it % self.opt.log_every == 0:
                     mean_loss = OrderedDict({"val_loss": val_loss})
                     self.logger.scalar_summary("val_loss", val_loss, it)
@@ -237,6 +238,7 @@ class MotionVQVAETrainer(object):
 
                     logs = OrderedDict()
                     #print_current_loss_decomp(start_time, it, total_iters, mean_loss, epoch, i)
+                '''
 
                 if it % self.opt.save_latest == 0:
                     self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = epoch, total_it = it, history = history)
@@ -565,6 +567,7 @@ class MotionDiTTrainer(object):
 
                 it += 1
 
+                '''
                 if it % self.opt.log_every == 0:
                     mean_loss = OrderedDict({"val_loss": val_loss})
                     self.logger.scalar_summary("val_loss", val_loss, it)
@@ -575,6 +578,7 @@ class MotionDiTTrainer(object):
 
                     logs = OrderedDict()
                     #print_current_loss_decomp(start_time, it, total_iters, mean_loss, epoch, i)
+                '''
 
                 if it % self.opt.save_latest == 0:
                     self.save(pjoin(self.opt.model_dir, "tmp.tar"), ep = epoch, train_batch_index = i, total_it = it, history = history)
@@ -625,7 +629,7 @@ class MotionDiTTrainer(object):
             if epoch % self.opt.save_every_e == 0:
                 self.save(pjoin(self.opt.model_dir, "E%04d.tar" % epoch), ep = epoch, train_batch_index=-1, total_it=it, history = history)
 
-            if epoch % self.opt.eval_every_e == 0:
+            if epoch % self.opt.log_every == 0:
                 print("Epoch:", epoch)
                 print(
                     "Train Loss: %.5f"
@@ -635,6 +639,8 @@ class MotionDiTTrainer(object):
                     "Validation Loss: %.5f"
                     % (val_loss)
                 )
+
+            if epoch % self.opt.eval_every_e == 0:
                 #data = torch.cat([self.recon_motions_by_part, self.motions_by_part], dim=0).detach().cpu().numpy()
                 save_dir = pjoin(self.opt.eval_dir, "E%04d" % epoch)
                 os.makedirs(save_dir, exist_ok=True)
