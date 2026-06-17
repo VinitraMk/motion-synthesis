@@ -101,16 +101,16 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def load_models(device, checkpoints_dir, meta_dir):
+def load_models(device, model_dir, meta_dir):
     
-    enc, dec = get_pretrained_vae(checkpoint_dir=checkpoints_dir)
+    enc, dec = get_pretrained_vae(model_dir=model_dir)
     enc.eval()
     dec.eval()
     #text_embedder = get_pretrained_text_encoder(device)
     #text_embedder.eval()
     text_encoder = TextTokenEncoder(device = device).to(device)
     text_encoder.eval()
-    dit_chkpt = torch.load(pjoin(checkpoints_dir, 'model/dit_crossattn_micro.tar'), map_location = device)
+    dit_chkpt = torch.load(pjoin(model_dir, 'dit_crossattn_full.tar'), map_location = device)
     dit = DiT(
         input_size = 512,
         hidden_size=1152,
@@ -235,7 +235,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     save_path = output_dir / args.gif_name
 
-    pipe, _ = load_models(device, args.checkpoints_dir, args.meta_dir)
+    pipe, _ = load_models(device, args.model_dir, args.meta_dir)
     print('args prompt: ', args.prompt)
 
     run_inference(

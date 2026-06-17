@@ -239,7 +239,7 @@ class MotionVQVAETrainer(object):
                     #print_current_loss_decomp(start_time, it, total_iters, mean_loss, epoch, i)
 
                 if it % self.opt.save_latest == 0:
-                    self.save(pjoin(self.opt.model_dir, "latest.tar"), epoch, it, history)
+                    self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = epoch, total_it = it, history = history)
 
             #epoch += 1
 
@@ -377,7 +377,7 @@ class MotionDiTTrainer(object):
 
     def _init_vae(self, autoencoder_type: str):
         if autoencoder_type == "pretrained_vae":
-            self.encoder, self.decoder = get_pretrained_vae(self.opt.checkpoints_dir)
+            self.encoder, self.decoder = get_pretrained_vae(self.opt.model_dir)
             self.encoder.to(self.device)
             self.decoder.to(self.device)
         else:
@@ -564,7 +564,7 @@ class MotionDiTTrainer(object):
                     #print_current_loss_decomp(start_time, it, total_iters, mean_loss, epoch, i)
 
                 if it % self.opt.save_latest == 0:
-                    self.save(pjoin(self.opt.model_dir, "latest.tar"), epoch, it, history)
+                    self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = epoch, total_it = it, history = history)
 
             #epoch += 1
 
@@ -596,13 +596,13 @@ class MotionDiTTrainer(object):
 
             if epochs_without_improve >= patience:
                 print(f"Early stopping at epoch {epoch}, best val {best_val:.4f}")
-                self.save(pjoin(self.opt.model_dir, "latest.tar"), epoch, total_it=it, history = history, best_model_state=best_state)
+                self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = epoch, total_it=it, history = history, best_model_state=best_state)
                 self.save_loss_data(history = history)
                 break
 
             
             if epoch % self.opt.save_every_e == 0:
-                self.save(pjoin(self.opt.model_dir, "E%04d.tar" % epoch), epoch, total_it=it, history = history)
+                self.save(pjoin(self.opt.model_dir, "E%04d.tar" % epoch), ep = epoch, total_it=it, history = history)
 
             if epoch % self.opt.eval_every_e == 0:
                 print("Epoch:", epoch)
