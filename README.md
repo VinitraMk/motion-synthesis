@@ -46,7 +46,7 @@ These two branches provide the benchmark-vs-structured setup needed to study whe
 
 ### Basic Diffusion pipeline inference results
 <br/>
-<img src="assets/dit_results/inference_test_clip_29.gif" alt="Alt text">
+<img src="assets/dit_results/inference_test_clip_20.gif" alt="Alt text">
 <br/>
 
 
