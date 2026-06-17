@@ -477,13 +477,14 @@ class MotionDiTTrainer(object):
         loss_logs["loss"] = self.loss.item()
         return loss_logs
 
-    def save(self, file_name, ep, total_it, history = None, best_model_state = None):
+    def save(self, file_name, ep, train_batch_index, total_it, history = None, best_model_state = None):
         state = {
             "dit": best_model_state if best_model_state != None else self.dit.state_dict(),
             "opt_dit": self.opt_dit.state_dict(),
             "scheduler_dit": self.scheduler_dit.state_dict(),
             "ep": ep,
             "total_it": total_it,
+            "train_batch_index": train_batch_index,
             "history": history
         }
         torch.save(state, file_name)
@@ -493,7 +494,7 @@ class MotionDiTTrainer(object):
         self.dit.load_state_dict(checkpoint["dit"])
         self.opt_dit.load_state_dict(checkpoint["opt_dit"])
         self.scheduler_dit.load_state_dict(checkpoint["scheduler_dit"])
-        return checkpoint["ep"], checkpoint["total_it"], checkpoint["history"]
+        return checkpoint["ep"], checkpoint["train_batch_index"], checkpoint["total_it"], checkpoint["history"]
 
     def train(self, train_dataloader, val_dataloader, plot_eval = None):
         self.dit.to(self.device)
@@ -511,9 +512,10 @@ class MotionDiTTrainer(object):
 
         epoch = 0
         it = 0
+        train_batch_index = -1
         if self.opt.is_continue:
             model_dir = pjoin(self.opt.model_dir, "latest.tar")
-            epoch, it, history = self.resume(model_dir)
+            epoch, train_batch_index, it, history = self.resume(model_dir)
             print(f'Resuming training from previous checkpoint at epoch {epoch}')
 
         start_time = time.time()
@@ -537,6 +539,8 @@ class MotionDiTTrainer(object):
             train_loss_sum = 0.0
             train_steps = 0
             for i, batch_data in enumerate(train_dataloader):
+                if train_batch_index != -1 and i <= train_batch_index:
+                    continue
                 self.dit.train()
                 self.forward(batch_data)
                 log_dict = self.update()
@@ -564,7 +568,7 @@ class MotionDiTTrainer(object):
                     #print_current_loss_decomp(start_time, it, total_iters, mean_loss, epoch, i)
 
                 if it % self.opt.save_latest == 0:
-                    self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = epoch, total_it = it, history = history)
+                    self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = epoch, train_batch_index = i, total_it = it, history = history)
 
             #epoch += 1
 
@@ -596,13 +600,13 @@ class MotionDiTTrainer(object):
 
             if epochs_without_improve >= patience:
                 print(f"Early stopping at epoch {epoch}, best val {best_val:.4f}")
-                self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = epoch, total_it=it, history = history, best_model_state=best_state)
+                self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = epoch, train_batch_index=-1, total_it=it, history = history, best_model_state=best_state)
                 self.save_loss_data(history = history)
                 break
 
             
             if epoch % self.opt.save_every_e == 0:
-                self.save(pjoin(self.opt.model_dir, "E%04d.tar" % epoch), ep = epoch, total_it=it, history = history)
+                self.save(pjoin(self.opt.model_dir, "E%04d.tar" % epoch), ep = epoch, train_batch_index=-1, total_it=it, history = history)
 
             if epoch % self.opt.eval_every_e == 0:
                 print("Epoch:", epoch)
