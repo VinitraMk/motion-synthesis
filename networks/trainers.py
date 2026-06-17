@@ -353,6 +353,7 @@ class MotionDiTTrainer(object):
         self.vae = None
         #self.text_encoder = get_pretrained_text_encoder(self.device)
         self.text_encoder = TextTokenEncoder(device = self.device).to(self.device)
+        self.text_encoder.eval()
 
         self._init_vae(autoencoder_type)
 

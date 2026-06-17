@@ -169,12 +169,12 @@ class DiTBlock(nn.Module):
         return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
     def forward(self, x, c, text_ctx, text_mask = None):
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.cond_proj(c).chunk(6, dim=1)
+        shift_msa, scale_msa, gate_msa, shift_ca, scale_ca, gate_ca= self.cond_proj(c).chunk(6, dim=1)
         h = self.modulate(self.norm1(x), shift_msa, scale_msa)
         x = x + gate_msa.unsqueeze(1) * self.self_attn(h)
 
-        h_cross = self.modulate(self.norm3(x), shift_msa, scale_msa)
-        x = x + gate_msa.unsqueeze(1) * self.cross_attn(h_cross, text_ctx, mask = text_mask)
+        h_cross = self.modulate(self.norm2(x), shift_ca, scale_ca)
+        x = x + gate_ca.unsqueeze(1) * self.cross_attn(h_cross, text_ctx, mask = text_mask)
 
         x = x + self.mlp(self.norm3(x))
         return x

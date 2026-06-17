@@ -108,9 +108,9 @@ def load_models(device, checkpoints_dir, meta_dir):
     dec.eval()
     #text_embedder = get_pretrained_text_encoder(device)
     #text_embedder.eval()
-    text_embedder = TextTokenEncoder(device = device).to(device)
-    text_embedder.eval()
-    dit_chkpt = torch.load(pjoin(checkpoints_dir, 'model/dit_crossattn_full.tar'), map_location = device)
+    text_encoder = TextTokenEncoder(device = device).to(device)
+    text_encoder.eval()
+    dit_chkpt = torch.load(pjoin(checkpoints_dir, 'model/dit_crossattn_micro.tar'), map_location = device)
     dit = DiT(
         input_size = 512,
         hidden_size=1152,
@@ -122,7 +122,7 @@ def load_models(device, checkpoints_dir, meta_dir):
 
     pipe = MotionPipeline(
         dit=dit,
-        text_embedder=text_embedder,
+        text_embedder=text_encoder,
         decoder=dec,
         device=device,
         meta_dir=meta_dir

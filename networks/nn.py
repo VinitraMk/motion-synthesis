@@ -171,7 +171,7 @@ class DiT(nn.Module):
         nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
         nn.init.constant_(self.x_embedder.bias, 0)
 
-        # Initialize label embedding table:
+        # Initialize text projection layer[]
         nn.init.normal_(self.text_proj.weight, std=0.02)
         nn.init.constant_(self.text_proj.bias, 0)
 
