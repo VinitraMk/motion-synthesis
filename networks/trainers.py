@@ -514,11 +514,20 @@ class MotionDiTTrainer(object):
         it = 0
         train_batch_index = -1
         if self.opt.is_continue:
-            model_dir = pjoin(self.opt.model_dir, "latest.tar")
-            epoch, train_batch_index, it, history = self.resume(model_dir)
-            print(f'Resuming training from previous checkpoint at epoch {epoch} from batch {train_batch_index} and iteration {it}')
+            model_dir = pjoin(self.opt.model_dir, "tmp.tar")
+            try:
+                epoch, train_batch_index, it, history = self.resume(model_dir)
+                print(f'Resuming training from previous checkpoint at epoch {epoch} from batch {train_batch_index} and iteration {it}')
+            except Exception as e:
+                print(f"Failed to load checkpoint from {model_dir}, trying last stable checkpoint. Error: {e}")
+                model_dir = pjoin(self.opt.model_dir, "latest.tar")
+                try:
+                    epoch, train_batch_index, it, history = self.resume(model_dir)
+                    print(f'Resuming training from previous stable checkpoint at epoch {epoch} from batch {train_batch_index} and iteration {it}')
+                except Exception as e:
+                    print(f"Failed to load checkpoint from {model_dir}. Starting training from scratch. Error: {e}")
+                
 
-        start_time = time.time()
         print("Iters Per Epoch, Training: %04d, Validation: %03d\n" %
               (len(train_dataloader), len(val_dataloader)))
 
@@ -568,7 +577,7 @@ class MotionDiTTrainer(object):
                     #print_current_loss_decomp(start_time, it, total_iters, mean_loss, epoch, i)
 
                 if it % self.opt.save_latest == 0:
-                    self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = epoch, train_batch_index = i, total_it = it, history = history)
+                    self.save(pjoin(self.opt.model_dir, "tmp.tar"), ep = epoch, train_batch_index = i, total_it = it, history = history)
 
             #epoch += 1
 
@@ -590,6 +599,14 @@ class MotionDiTTrainer(object):
             val_loss /= denom
             history["val_loss"].append(val_loss)
 
+            if os.path.exists(pjoin(self.opt.model_dir, "tmp.tar")):
+                try:
+                    model_ckpt = torch.load(pjoin(self.opt.model_dir, "tmp.tar"), map_location="cpu")
+                    self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = model_ckpt["ep"], train_batch_index = model_ckpt["train_batch_index"], total_it = model_ckpt["total_it"], history = model_ckpt["history"], best_model_state = best_state)
+                    del model_ckpt
+                except Exception as e:
+                    print(f"Failed to load checkpoint from {pjoin(self.opt.model_dir, 'tmp.tar')}. Skipping save to latest.tar. Error: {e}")
+                os.remove(pjoin(self.opt.model_dir, "tmp.tar")) # removing tar if latest stable is saved
 
             if best_val - val_loss > min_delta:
                 best_val = val_loss
@@ -603,8 +620,8 @@ class MotionDiTTrainer(object):
                 self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = epoch, train_batch_index=-1, total_it=it, history = history, best_model_state=best_state)
                 self.save_loss_data(history = history)
                 break
-
             
+
             if epoch % self.opt.save_every_e == 0:
                 self.save(pjoin(self.opt.model_dir, "E%04d.tar" % epoch), ep = epoch, train_batch_index=-1, total_it=it, history = history)
 
