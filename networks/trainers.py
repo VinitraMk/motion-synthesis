@@ -515,6 +515,7 @@ class MotionDiTTrainer(object):
         epoch = 0
         it = 0
         train_batch_index = -1
+        B = len(train_dataloader)
         if self.opt.is_continue:
             model_dir = pjoin(self.opt.model_dir, "tmp.tar")
             try:
@@ -528,7 +529,9 @@ class MotionDiTTrainer(object):
                     print(f'Resuming training from previous stable checkpoint at epoch {epoch} from batch {train_batch_index} and iteration {it}')
                 except Exception as e:
                     print(f"Failed to load checkpoint from {model_dir}. Starting training from scratch. Error: {e}")
-                
+            if train_batch_index == B-1:
+                epoch += 1
+                train_batch_index = -1
 
         print("Iters Per Epoch, Training: %04d, Validation: %03d\n" %
               (len(train_dataloader), len(val_dataloader)))
