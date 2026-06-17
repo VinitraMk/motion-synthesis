@@ -516,7 +516,7 @@ class MotionDiTTrainer(object):
         if self.opt.is_continue:
             model_dir = pjoin(self.opt.model_dir, "latest.tar")
             epoch, train_batch_index, it, history = self.resume(model_dir)
-            print(f'Resuming training from previous checkpoint at epoch {epoch}')
+            print(f'Resuming training from previous checkpoint at epoch {epoch} from batch {train_batch_index} and iteration {it}')
 
         start_time = time.time()
         print("Iters Per Epoch, Training: %04d, Validation: %03d\n" %
