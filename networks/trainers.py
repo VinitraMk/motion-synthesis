@@ -547,7 +547,7 @@ class MotionDiTTrainer(object):
         val_loss = 0
         best_val = float("inf")
         best_state = None
-        patience = 10
+        patience = 20
         epochs_without_improve = 0
         min_delta = 1e-3
 
