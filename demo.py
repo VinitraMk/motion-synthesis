@@ -54,8 +54,8 @@ class MotionPipeline:
         z2 = z1.clone()
 
         #cond = self.text_embedder.encode(prompt, convert_to_tensor = True, device = str(self.device)).clone()
-        text_tokens, text_mask = self.text_embedder.encode_tokens(["a person waving their arms"])
-        text_tokens1, text_mask1 = self.text_embedder.encode_tokens(["a person sitting down"])
+        text_tokens, text_mask = self.text_embedder.encode_tokens(["person has arms extended to side of body shoulder height"])
+        text_tokens1, text_mask1 = self.text_embedder.encode_tokens(["a person twists from side to side"])
         print(prompt, num_inference_steps)
 
         for d_step in range(num_inference_steps):
@@ -212,7 +212,7 @@ def run_inference(pipe, prompt, num_steps, seed, device, outputs_path):
         joints_recon=motion_joints1,
         output_path_no_ext=pjoin(outputs_path, f'inference_test_clip_{file_id}'),
         clip_id=f'inference_test_clip_{file_id}',
-        text = "a person waving their arms",
+        text = "person has arms extended to side of body shoulder height",
         recon_caption='Diffusion inference'
     )
     all_gif_files = [fname for fname in os.listdir(outputs_path) if ".gif" in fname]
@@ -221,7 +221,7 @@ def run_inference(pipe, prompt, num_steps, seed, device, outputs_path):
         joints_recon=motion_joints2,
         output_path_no_ext=pjoin(outputs_path, f'inference_test_clip_{file_id}'),
         clip_id=f'inference_test_clip_{file_id}',
-        text = "a person sitting down",
+        text = "a person twists from side to side",
         recon_caption='Diffusion inference'
     )
 
