@@ -520,18 +520,21 @@ class MotionDiTTrainer(object):
             model_dir = pjoin(self.opt.model_dir, "tmp.tar")
             try:
                 epoch, train_batch_index, it, history = self.resume(model_dir)
-                print(f'Resuming training from previous checkpoint at epoch {epoch} from batch {train_batch_index} and iteration {it}')
+                #print(f'Resuming training from previous checkpoint at epoch {epoch} from batch {train_batch_index} and iteration {it}')
             except Exception as e:
                 print(f"Failed to load checkpoint from {model_dir}, trying last stable checkpoint. Error: {e}")
                 model_dir = pjoin(self.opt.model_dir, "latest.tar")
                 try:
                     epoch, train_batch_index, it, history = self.resume(model_dir)
-                    print(f'Resuming training from previous stable checkpoint at epoch {epoch} from batch {train_batch_index} and iteration {it}')
+                    #print(f'Resuming training from previous stable checkpoint at epoch {epoch} from batch {train_batch_index} and iteration {it}')
                 except Exception as e:
                     print(f"Failed to load checkpoint from {model_dir}. Starting training from scratch. Error: {e}")
+
             if train_batch_index == B-1:
+                # this is to handle resuming from a checkpoint that ended at max_epochs in a previous run and user decided to extend it.
                 epoch += 1
                 train_batch_index = -1
+            print(f'Resuming training from previous checkpoint at epoch {epoch} from batch {train_batch_index} and iteration {it}')
 
         print("Iters Per Epoch, Training: %04d, Validation: %03d\n" %
               (len(train_dataloader), len(val_dataloader)))
@@ -609,7 +612,7 @@ class MotionDiTTrainer(object):
             if os.path.exists(pjoin(self.opt.model_dir, "tmp.tar")):
                 try:
                     model_ckpt = torch.load(pjoin(self.opt.model_dir, "tmp.tar"), map_location="cpu")
-                    self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = model_ckpt["ep"], train_batch_index = model_ckpt["train_batch_index"], total_it = model_ckpt["total_it"], history = model_ckpt["history"], best_model_state = best_state)
+                    self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = epoch, train_batch_index = -1, total_it = it, history = history)
                     del model_ckpt
                 except Exception as e:
                     print(f"Failed to load checkpoint from {pjoin(self.opt.model_dir, 'tmp.tar')}. Skipping save to latest.tar. Error: {e}")

@@ -86,7 +86,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--prompt", type=str, help="A prompt for the generation pipeline", default = 'A person waving their arms')
     parser.add_argument("--output_dir", type=str, default="outputs/diffusion_inference")
-    parser.add_argument("--checkpoints_dir", type=str, default="checkpoints")
+    parser.add_argument("--model_dir", type=str, default="checkpoints/model")
     parser.add_argument("--meta_dir", type=str, default="checkpoints/HumanML3D/test/meta")
     parser.add_argument("--gif_name", type=str, default="sample.gif")
     parser.add_argument("--num_steps", type=int, default=50)
@@ -110,7 +110,7 @@ def load_models(device, model_dir, meta_dir):
     #text_embedder.eval()
     text_encoder = TextTokenEncoder(device = device).to(device)
     text_encoder.eval()
-    dit_chkpt = torch.load(pjoin(model_dir, 'dit_crossattn_full.tar'), map_location = device)
+    dit_chkpt = torch.load(pjoin(model_dir, 'dit_crossattn_debug.tar'), map_location = device)
     dit = DiT(
         input_size = 512,
         hidden_size=1152,
