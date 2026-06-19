@@ -165,7 +165,7 @@ class DiTBlock(nn.Module):
         )
         self.cond_proj = nn.Linear(context_dim, 6 * hidden_size, bias=True)
         with torch.no_grad():
-            gate_ca_bias = self.cond_proj.bias[5 * hidden_size: 6 * hidden_size]
+            gate_ca_bias = self.cond_proj.bias[5 * hidden_size: 9 * hidden_size]
             gate_ca_bias.fill_(0.5)
         self.last_cross_out = None
 
@@ -173,7 +173,7 @@ class DiTBlock(nn.Module):
         return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
     def forward(self, x, c, text_ctx, text_mask = None):
-        shift_msa, scale_msa, gate_msa, shift_ca, scale_ca, gate_ca= self.cond_proj(c).chunk(6, dim=1)
+        shift_msa, scale_msa, gate_msa, shift_ca, scale_ca, gate_ca, shift_mlp, scale_mlp, gate_mlp = self.cond_proj(c).chunk(9, dim=1)
         h = self.modulate(self.norm1(x), shift_msa, scale_msa)
         x = x + gate_msa.unsqueeze(1) * self.self_attn(h)
 
@@ -182,7 +182,9 @@ class DiTBlock(nn.Module):
         x = x + gate_ca.unsqueeze(1) * cross_out
         self.last_cross_out = cross_out
 
-        x = x + self.mlp(self.norm3(x))
+        #x = x + self.mlp(self.norm3(x))
+        h = self.modulate(self.norm3(x), shift_mlp, scale_mlp)
+        x = x + gate_mlp.unsqueeze(1) * self.mlp(h)
 
         return x
 
