@@ -25,6 +25,7 @@ class MotionPipeline:
         beta_end=2e-2):
 
         self.dit = dit
+        self.dit.eval()
         self.text_embedder = text_embedder
         self.decoder = decoder
         self.device = device
@@ -54,9 +55,11 @@ class MotionPipeline:
         z2 = z1.clone()
 
         #cond = self.text_embedder.encode(prompt, convert_to_tensor = True, device = str(self.device)).clone()
-        text_tokens, text_mask = self.text_embedder.encode_tokens(["person has arms extended to side of body shoulder height"])
+        text_tokens, text_mask = self.text_embedder.encode_tokens(["a person walking slowly"])
         text_tokens1, text_mask1 = self.text_embedder.encode_tokens(["a person twists from side to side"])
         print(prompt, num_inference_steps)
+        print(text_tokens.mean().item(), text_tokens.std().item())
+        print(text_tokens1.mean().item(), text_tokens1.std().item())
 
         for d_step in range(num_inference_steps):
             t = torch.full((z1.shape[0], ), fill_value = d_step / (num_inference_steps - 1), device = self.device)
@@ -67,10 +70,20 @@ class MotionPipeline:
             v1 = self.dit(z1, t, d, text_tokens, text_mask)
             z1 = z1 + alpha * v1
 
+            block = self.dit.blocks[-1]
+            cross_out_1 = block.last_cross_out # shape [B, L_motion, dim]
+
             v2 = self.dit(z2, t, d, text_tokens1, text_mask1)
             z2 = z2 + alpha * v2
 
-            print(f'predictions at {d_step}', (v1 - v2).abs().mean().item())
+            block = self.dit.blocks[-1]
+            cross_out_2 = block.last_cross_out # shape [B, L_motion, dim]
+
+            diff = (cross_out_1 - cross_out_2).abs().mean().item()
+            print("Mean |cross_out(text1) - cross_out(text2)|:", diff)
+
+            pred_diff = (v1 - v2).abs().mean().item()
+            print("Mean |pred(text1) - pred(text2)|:", pred_diff)
 
         motion1 = self.decoder(z1)
         motion2 = self.decoder(z2)
@@ -110,7 +123,7 @@ def load_models(device, model_dir, meta_dir):
     #text_embedder.eval()
     text_encoder = TextTokenEncoder(device = device).to(device)
     text_encoder.eval()
-    dit_chkpt = torch.load(pjoin(model_dir, 'dit_crossattn_debug.tar'), map_location = device)
+    dit_chkpt = torch.load(pjoin(model_dir, 'dit_crossattn_micro.tar'), map_location = device)
     dit = DiT(
         input_size = 512,
         hidden_size=1152,
@@ -212,7 +225,7 @@ def run_inference(pipe, prompt, num_steps, seed, device, outputs_path):
         joints_recon=motion_joints1,
         output_path_no_ext=pjoin(outputs_path, f'inference_test_clip_{file_id}'),
         clip_id=f'inference_test_clip_{file_id}',
-        text = "person has arms extended to side of body shoulder height",
+        text = "a person walking slowly",
         recon_caption='Diffusion inference'
     )
     all_gif_files = [fname for fname in os.listdir(outputs_path) if ".gif" in fname]

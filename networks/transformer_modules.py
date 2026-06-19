@@ -164,6 +164,10 @@ class DiTBlock(nn.Module):
             nn.Linear(mlp_hidden_dim, hidden_size, bias=True)
         )
         self.cond_proj = nn.Linear(context_dim, 6 * hidden_size, bias=True)
+        with torch.no_grad():
+            gate_ca_bias = self.cond_proj.bias[5 * hidden_size: 6 * hidden_size]
+            gate_ca_bias.fill_(0.5)
+        self.last_cross_out = None
 
     def modulate(self, x, shift, scale):
         return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
@@ -174,9 +178,12 @@ class DiTBlock(nn.Module):
         x = x + gate_msa.unsqueeze(1) * self.self_attn(h)
 
         h_cross = self.modulate(self.norm2(x), shift_ca, scale_ca)
-        x = x + gate_ca.unsqueeze(1) * self.cross_attn(h_cross, text_ctx, mask = text_mask)
+        cross_out = self.cross_attn(h_cross, text_ctx, mask = text_mask)
+        x = x + gate_ca.unsqueeze(1) * cross_out
+        self.last_cross_out = cross_out
 
         x = x + self.mlp(self.norm3(x))
+
         return x
 
 

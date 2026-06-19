@@ -194,6 +194,8 @@ class DiT(nn.Module):
         nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)
 
+        self.text_cond_scale = 2.0
+
     def forward(self, x, t, d, text_tokens, text_mask = None):
         """
         Forward pass of DiT.
@@ -209,7 +211,7 @@ class DiT(nn.Module):
         d = self.d_embedder(d)                   # (N, C_latent)
         c = t + d                                # (N, C_latent)
 
-        text_ctx = self.text_proj(text_tokens)
+        text_ctx = self.text_proj(text_tokens * self.text_cond_scale)
         for block in self.blocks:
             x = block(x, c, text_ctx, text_mask) # (N, T, C_latent)
         x = self.final_layer(x, c)               # (N, T, D_latent)
