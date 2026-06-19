@@ -163,9 +163,9 @@ class DiTBlock(nn.Module):
             nn.GELU(),
             nn.Linear(mlp_hidden_dim, hidden_size, bias=True)
         )
-        self.cond_proj = nn.Linear(context_dim, 6 * hidden_size, bias=True)
+        self.cond_proj = nn.Linear(context_dim, 9 * hidden_size, bias=True)
         with torch.no_grad():
-            gate_ca_bias = self.cond_proj.bias[5 * hidden_size: 9 * hidden_size]
+            gate_ca_bias = self.cond_proj.bias[5 * hidden_size: 6 * hidden_size]
             gate_ca_bias.fill_(0.5)
         self.last_cross_out = None
 
