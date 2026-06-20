@@ -472,7 +472,8 @@ class MotionDiTTrainer(object):
         pred_flat = self.pred.flatten(start_dim = 1)
         pred_flat = F.normalize(pred_flat, dim = 1)
         sim = pred_flat @ pred_flat.t()
-        sim = sim - torch.eye(B, device = self.device) * 1e9 #ignore self-similarity
+        off_diag_idx = ~torch.eye(B, dtype = torch.bool, device = self.device)
+        sim = sim[off_diag_idx]
 
         diff_mask = torch.tensor(
             [[texts[i] != texts[j] for j in range(B)] for i in range(B)],
