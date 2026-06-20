@@ -217,7 +217,7 @@ class DiT(nn.Module):
         c = t + d                                # (N, C_latent)
 
         text_ctx = self.text_proj(text_tokens)
-        #text_ctx = text_ctx * self.text_cond_scale
+        text_ctx = text_ctx * self.text_cond_scale
         for block in self.blocks:
             x = block(x, c, text_ctx, text_mask) # (N, T, C_latent)
         x = self.final_layer(x, c)               # (N, T, D_latent)
