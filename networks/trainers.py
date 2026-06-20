@@ -472,16 +472,18 @@ class MotionDiTTrainer(object):
         pred_flat = self.pred.flatten(start_dim = 1)
         pred_flat = F.normalize(pred_flat, dim = 1)
         sim = pred_flat @ pred_flat.t()
-        off_diag_idx = ~torch.eye(B, dtype = torch.bool, device = self.device)
-        sim = sim[off_diag_idx]
 
         diff_mask = torch.tensor(
             [[texts[i] != texts[j] for j in range(B)] for i in range(B)],
             device = self.device,
             dtype = torch.bool
         )
+        off_diag_idx = ~torch.eye(B, dtype = torch.bool, device = self.device)
+        valid_els = off_diag_idx & diff_mask
+        sim = sim[valid_els]
+
         margin = 0.2
-        contrastive_loss = F.relu(sim[diff_mask] - margin).mean()
+        contrastive_loss = F.relu(sim - margin).mean()
 
         lambda_contrast = 0.05
         self.loss = mse_loss + lambda_contrast * contrastive_loss
