@@ -464,7 +464,27 @@ class MotionDiTTrainer(object):
         # Check output of DiT and loss
         if torch.isnan(self.pred).any():
             print("NaN in pred")
-        self.loss = F.mse_loss(self.pred, self.target)
+
+        #mse loss
+        mse_loss = F.mse_loss(self.pred, self.target)
+
+        #contrastive loss term
+        pred_flat = self.pred.flatten(start_dim = 1)
+        pred_flat = F.normalize(pred_flat, dim = 1)
+        sim = pred_flat @ pred_flat.t()
+        sim = sim - torch.eye(B, device = self.device) * 1e9 #ignore self-similarity
+
+        diff_mask = torch.tensor(
+            [[texts[i] != texts[j] for j in range(B)] for i in range(B)],
+            device = self.device,
+            dtype = torch.bool
+        )
+        margin = 0.2
+        contrastive_loss = F.relu(sim[diff_mask] - margin).mean()
+
+        lambda_contrast = 0.05
+        self.loss = mse_loss + lambda_contrast * contrastive_loss
+
 
     def update(self):
         if torch.isnan(self.loss):
@@ -548,7 +568,7 @@ class MotionDiTTrainer(object):
         val_loss = 0
         best_val = float("inf")
         best_state = None
-        patience = 20
+        patience = 10
         epochs_without_improve = 0
         min_delta = 1e-3
 
