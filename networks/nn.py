@@ -191,7 +191,7 @@ class DiT(nn.Module):
         with torch.no_grad():
             for block in self.blocks:
                 nn.init.constant_(block.cond_proj.bias, 0)
-                self.cond_proj.bias[5 * self.hidden_size: 6 * self.hidden_size].fill_(0.5)
+                block.cond_proj.bias[5 * self.hidden_size: 6 * self.hidden_size].fill_(0.5)
 
         # Zero-out output layers:
         nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
