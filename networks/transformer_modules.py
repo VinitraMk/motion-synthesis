@@ -123,7 +123,7 @@ class CrossAttention(nn.Module):
 
         if mask is not None:
             mask = mask[:, None, None, :].to(dtype = torch.bool)
-            attn_scores = attn_scores.masked_fill(~mask, float('-inf'))
+            attn_scores = attn_scores.masked_fill(~mask, -1e6)
 
         attn_weights = torch.softmax(attn_scores, dim=-1)
         attn_weights = self.dropout(attn_weights)
@@ -164,9 +164,7 @@ class DiTBlock(nn.Module):
             nn.Linear(mlp_hidden_dim, hidden_size, bias=True)
         )
         self.cond_proj = nn.Linear(context_dim, 9 * hidden_size, bias=True)
-        with torch.no_grad():
-            gate_ca_bias = self.cond_proj.bias[5 * hidden_size: 6 * hidden_size]
-            gate_ca_bias.fill_(0.5)
+        
         self.last_cross_out = None
 
     def modulate(self, x, shift, scale):

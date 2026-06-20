@@ -143,7 +143,7 @@ class DiT(nn.Module):
 
         # Will use fixed sin-cos embedding:
         self.pos_embed = nn.Parameter(
-            torch.zeros(1, max_seq_len, hidden_size), requires_grad = True
+            torch.zeros(1, max_seq_len, hidden_size), requires_grad = False
         )
 
         self.blocks = nn.ModuleList([
@@ -187,6 +187,11 @@ class DiT(nn.Module):
             nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
             nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
         '''
+        # initialize conditional projection biases
+        with torch.no_grad():
+            for block in self.blocks:
+                nn.init.constant_(block.cond_proj.bias, 0)
+                self.cond_proj.bias[5 * self.hidden_size: 6 * self.hidden_size].fill_(0.5)
 
         # Zero-out output layers:
         nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
@@ -211,7 +216,8 @@ class DiT(nn.Module):
         d = self.d_embedder(d)                   # (N, C_latent)
         c = t + d                                # (N, C_latent)
 
-        text_ctx = self.text_proj(text_tokens * self.text_cond_scale)
+        text_ctx = self.text_proj(text_tokens)
+        #text_ctx = text_ctx * self.text_cond_scale
         for block in self.blocks:
             x = block(x, c, text_ctx, text_mask) # (N, T, C_latent)
         x = self.final_layer(x, c)               # (N, T, D_latent)

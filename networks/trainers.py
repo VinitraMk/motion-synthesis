@@ -13,6 +13,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from networks.autoencoder_modules import MovementConvEncoder, MovementConvDecoder
 from utils.pretrained_model_utils import get_pretrained_vae, get_pretrained_text_encoder
 from networks.transformer_modules import TextTokenEncoder
+from copy import deepcopy
 
 class Logger(object):
   def __init__(self, log_dir):
@@ -349,7 +350,7 @@ class MotionDiTTrainer(object):
             param_groups,
             lr=args.lr,
             betas=(0.9, 0.999),
-            weight_decay=1e-4
+            weight_decay=1e-3
         )
 
         self.vae = None
@@ -433,10 +434,10 @@ class MotionDiTTrainer(object):
                 #device = str(self.device)
             #).float()
             text_tokens, text_mask = self.text_encoder.encode_tokens(texts)
-        self.latents = latents.clone() # to ensure that inference tensors are not created
+        self.latents = latents.detach().clone() # to ensure that inference tensors are not created
         #self.text_emb = text_emb.clone() # to ensure that inference tensors are not created
-        self.text_tokens = text_tokens.clone()
-        self.text_mask = text_mask.clone()
+        self.text_tokens = text_tokens.detach().clone()
+        self.text_mask = text_mask.detach().clone()
 
         self.noise = torch.randn_like(self.latents)
         B = self.latents.shape[0]
@@ -481,9 +482,9 @@ class MotionDiTTrainer(object):
 
     def save(self, file_name, ep, train_batch_index, total_it, history = None, best_model_state = None):
         state = {
-            "dit": best_model_state if best_model_state != None else self.dit.state_dict(),
-            "opt_dit": self.opt_dit.state_dict(),
-            "scheduler_dit": self.scheduler_dit.state_dict(),
+            "dit": best_model_state if best_model_state != None else deepcopy(self.dit.state_dict()),
+            "opt_dit": deepcopy(self.opt_dit.state_dict()),
+            "scheduler_dit": deepcopy(self.scheduler_dit.state_dict()),
             "ep": ep,
             "total_it": total_it,
             "train_batch_index": train_batch_index,
@@ -620,7 +621,7 @@ class MotionDiTTrainer(object):
 
             if best_val - val_loss > min_delta:
                 best_val = val_loss
-                best_state = self.dit.state_dict()
+                best_state = deepcopy(self.dit.state_dict())
                 epochs_without_improve = 0
             else:
                 epochs_without_improve += 1
