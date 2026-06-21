@@ -47,3 +47,24 @@ def cpu_deepcopy_state(obj):
         return tuple(cpu_deepcopy_state(v) for v in obj)
     else:
         return obj
+    
+def move_state_to_device(obj, device):
+    """
+    Recursively move a state-like object to `device`.
+
+    - Tensors -> .to(device)
+    - dict -> recursively processed dict
+    - list/tuple -> recursively processed sequence
+    - other Python objects -> returned as-is
+    """
+    if torch.is_tensor(obj):
+        return obj.to(device)
+    elif isinstance(obj, dict):
+        return {k: move_state_to_device(v, device) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [move_state_to_device(v, device) for v in obj]
+    elif isinstance(obj, tuple):
+        return tuple(move_state_to_device(v, device) for v in obj)
+    else:
+        return obj
+    

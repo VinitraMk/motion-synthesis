@@ -6,7 +6,7 @@ import torch.optim as optim
 from collections import OrderedDict
 from os.path import join as pjoin
 from torch.nn.utils import clip_grad_norm_
-from utils.utils import print_current_loss_decomp, cpu_deepcopy_state
+from utils.utils import print_current_loss_decomp, cpu_deepcopy_state, move_state_to_device
 import matplotlib.pyplot as plt
 from networks.nn import MotionVQVAE, DiT
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -540,8 +540,11 @@ class MotionDiTTrainer(object):
     def resume(self, model_dir):
         checkpoint = torch.load(model_dir, map_location=self.device)
         self.dit.load_state_dict(checkpoint["dit"])
+        move_state_to_device(self.dit, self.device)
         self.opt_dit.load_state_dict(checkpoint["opt_dit"])
+        move_state_to_device(self.opt_dit, self.device)
         self.scheduler_dit.load_state_dict(checkpoint["scheduler_dit"])
+        move_state_to_device(self.scheduler_dit, self.device)
         return checkpoint["ep"], checkpoint["train_batch_index"], checkpoint["total_it"], checkpoint["history"]
 
     def train(self, train_dataloader, val_dataloader, plot_eval = None):
