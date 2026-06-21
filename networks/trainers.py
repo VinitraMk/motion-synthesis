@@ -466,7 +466,7 @@ class MotionDiTTrainer(object):
         mse_loss = F.mse_loss(self.pred, self.target)
 
         #contrastive loss term
-        pred_flat = self.pred.flatten(start_dim = 1)
+        pred_flat = self.pred.flatten(start_dim = 1).float()
         pred_flat = F.normalize(pred_flat, dim = 1)
         print('pred flat norm isnan', torch.isnan(pred_flat).any())
         sim = pred_flat @ pred_flat.t()
