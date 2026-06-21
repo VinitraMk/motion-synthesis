@@ -425,6 +425,19 @@ class MotionDiTTrainer(object):
             plt.savefig(pjoin(self.opt.experiment_dir, f"{key}.png"))
             plt.close()
 
+        plt.figure(figsize=(10, 6))
+        for key, title in loss_pairs:
+            plt.plot(epochs, history[f"train_{key}"], label=f"train_{key}")
+            plt.plot(epochs, history[f"val_{key}"], linestyle="--", label=f"val_{key}")
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.title("All Losses")
+        plt.legend(fontsize=8, ncol=2)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(pjoin(self.opt.experiment_dir, "all_losses.png"))
+        plt.close()
+
     def forward(self, batch_data):
         self.dit.train()
         motions = batch_data['motion'].to(self.device).float()
@@ -594,6 +607,8 @@ class MotionDiTTrainer(object):
         while epoch < self.opt.max_epoch:
             
             train_loss_sum = 0.0
+            train_mse_loss_sum = 0.0
+            train_contrastive_loss_sum = 0.0
             train_steps = 0
             for i, batch_data in enumerate(train_dataloader):
                 if train_batch_index != -1 and i <= train_batch_index:
@@ -603,8 +618,8 @@ class MotionDiTTrainer(object):
                 log_dict = self.update()
 
                 train_loss_sum += self.loss.item()
-                train_contrastive_loss_avg += self.contrastive_loss.item()
-                train_mse_loss_avg += self.mse_loss.item()
+                train_contrastive_loss_sum += self.contrastive_loss.item()
+                train_mse_loss_sum += self.mse_loss.item()
 
                 train_steps += 1
 
@@ -635,8 +650,8 @@ class MotionDiTTrainer(object):
             #epoch += 1
 
             train_loss_avg = train_loss_sum / max(train_steps, 1)
-            train_mse_loss_avg = train_mse_loss_avg / max(train_steps, 1)
-            train_contrastive_loss_avg = train_contrastive_loss_avg / max(train_steps, 1)
+            train_mse_loss_avg = train_mse_loss_sum / max(train_steps, 1)
+            train_contrastive_loss_avg = train_contrastive_loss_sum / max(train_steps, 1)
 
             history["train_loss"].append(train_loss_avg)
             history['train_mse_loss'].append(train_mse_loss_avg)
@@ -644,6 +659,8 @@ class MotionDiTTrainer(object):
 
             #print("Validation time:")
             val_loss = 0
+            val_contrastive_loss_avg = 0
+            val_mse_loss_avg = 0
 
             with torch.no_grad():
                 self.dit.eval()
@@ -651,6 +668,8 @@ class MotionDiTTrainer(object):
                     self.forward(batch_data)
 
                     val_loss += self.loss.item()
+                    val_contrastive_loss_avg += self.contrastive_loss.item()
+                    val_mse_loss_avg += self.mse_loss.item()
 
             denom = max(len(val_dataloader), 1)
             val_loss /= denom
