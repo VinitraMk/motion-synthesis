@@ -617,9 +617,9 @@ class MotionDiTTrainer(object):
                 self.forward(batch_data)
                 log_dict = self.update()
 
-                train_loss_sum += self.loss.item()
-                train_contrastive_loss_sum += self.contrastive_loss.item()
-                train_mse_loss_sum += self.mse_loss.item()
+                train_loss_sum += self.loss.detach().cpu().item()
+                train_contrastive_loss_sum += self.contrastive_loss.detach().cpu().item()
+                train_mse_loss_sum += self.mse_loss.detach().cpu().item()
 
                 train_steps += 1
 
