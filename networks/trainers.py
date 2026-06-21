@@ -492,7 +492,7 @@ class MotionDiTTrainer(object):
             print('diff clamp isnan:', torch.isnan(diff).any())
             diff = diff.clamp(min = -1.0, max = 1.0)
             contrastive_loss = F.relu(diff)#.mean()
-            print('contrastive loss:', torch.isnan(contrastive_loss))
+            print('contrastive loss:', torch.isnan(contrastive_loss).any())
         else:
             contrastive_loss = sim.new_zeros(())
         print('mse loss vs contrastive loss: ', mse_loss, contrastive_loss)
