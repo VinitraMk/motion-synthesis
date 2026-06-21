@@ -485,12 +485,12 @@ class MotionDiTTrainer(object):
         margin = 0.2
         if valid_els.numel() > 0:
             sim = sim[valid_els]
-            sim = sim.clamp(min = -10.0, max = 10.0)
+            sim = sim.clamp(min = -1.0, max = 1.0)
             print('sim clamp:', torch.isnan(sim).any())
             margin = 0.2
             diff = sim - margin
             print('diff clamp isnan:', torch.isnan(diff).any())
-            diff = diff.clamp(min = -10.0, max = 10.0)
+            diff = diff.clamp(min = -1.0, max = 1.0)
             contrastive_loss = F.relu(diff).mean()
             print('contrastive loss:', torch.isnan(contrastive_loss))
         else:
