@@ -1,6 +1,7 @@
 import math
 import time
 import os
+import torch
 
 def print_current_loss_decomp(start_time, niter_state, total_niters, losses, epoch=None, inner_iter=None):
 
@@ -26,3 +27,23 @@ def print_current_loss_decomp(start_time, niter_state, total_niters, losses, epo
 
 def ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
+
+def cpu_deepcopy_state(obj):
+    """
+    Recursively copy a state-like object to CPU RAM.
+
+    - Tensors -> detached clone on CPU
+    - dict -> recursively copied dict
+    - list/tuple -> recursively copied sequence
+    - other python objects -> returned as-is
+    """
+    if torch.is_tensor(obj):
+        return obj.detach().cpu().clone()
+    elif isinstance(obj, dict):
+        return {k: cpu_deepcopy_state(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [cpu_deepcopy_state(v) for v in obj]
+    elif isinstance(obj, tuple):
+        return tuple(cpu_deepcopy_state(v) for v in obj)
+    else:
+        return obj

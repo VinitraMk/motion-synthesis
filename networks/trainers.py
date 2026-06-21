@@ -6,7 +6,7 @@ import torch.optim as optim
 from collections import OrderedDict
 from os.path import join as pjoin
 from torch.nn.utils import clip_grad_norm_
-from utils.utils import print_current_loss_decomp
+from utils.utils import print_current_loss_decomp, cpu_deepcopy_state
 import matplotlib.pyplot as plt
 from networks.nn import MotionVQVAE, DiT
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -479,9 +479,8 @@ class MotionDiTTrainer(object):
             print("NaN in pred")
         #mse loss
         self.mse_loss = F.mse_loss(self.pred, self.target)
-        self.contrastive_loss = 0.0
+        self.contrastive_loss = torch.tensor(0.0)
 
-        '''
         #contrastive loss term
         pred_flat = self.pred.flatten(start_dim = 1).float()
         pred_flat = F.normalize(pred_flat, dim = 1)
@@ -508,8 +507,6 @@ class MotionDiTTrainer(object):
             self.contrastive_loss = sim.new_zeros(())
         lambda_contrast = 0.05
         self.loss = self.mse_loss + lambda_contrast * self.contrastive_loss
-        '''
-        self.loss = self.mse_loss
 
 
     def update(self):
@@ -530,9 +527,9 @@ class MotionDiTTrainer(object):
 
     def save(self, file_name, ep, train_batch_index, total_it, history = None, best_model_state = None):
         state = {
-            "dit": best_model_state if best_model_state != None else deepcopy(self.dit.state_dict()),
-            "opt_dit": deepcopy(self.opt_dit.state_dict()),
-            "scheduler_dit": deepcopy(self.scheduler_dit.state_dict()),
+            "dit": best_model_state if best_model_state != None else cpu_deepcopy_state(self.dit.state_dict()),
+            "opt_dit": cpu_deepcopy_state(self.opt_dit.state_dict()),
+            "scheduler_dit": cpu_deepcopy_state(self.scheduler_dit.state_dict()),
             "ep": ep,
             "total_it": total_it,
             "train_batch_index": train_batch_index,
@@ -694,7 +691,7 @@ class MotionDiTTrainer(object):
 
             if best_val - val_loss > min_delta:
                 best_val = val_loss
-                best_state = deepcopy(self.dit.state_dict())
+                best_state = cpu_deepcopy_state(self.dit.state_dict())
                 epochs_without_improve = 0
             else:
                 epochs_without_improve += 1
