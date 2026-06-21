@@ -477,14 +477,14 @@ class MotionDiTTrainer(object):
             device = self.device,
             dtype = torch.bool
         )
-        print('diff mask isnan', torch.isnan(diff_mask).any())
         off_diag_idx = ~torch.eye(B, dtype = torch.bool, device = self.device)
         print('off diag isnan:', torch.isnan(off_diag_idx).any())
-        valid_els = off_diag_idx & ~diff_mask
+        valid_els = off_diag_idx & diff_mask
         print('true count vs false count: ', valid_els.sum().item(), (~valid_els).sum().item())
+        true_count = valid_els.sum().item()
 
         margin = 0.2
-        if valid_els.numel() > 0:
+        if true_count > 0:
             sim = sim[valid_els]
             sim = sim.clamp(min = -1.0, max = 1.0)
             print('sim clamp:', valid_els.numel(), sim.numel(), torch.isnan(sim).any())
