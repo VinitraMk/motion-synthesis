@@ -479,7 +479,9 @@ class MotionDiTTrainer(object):
             print("NaN in pred")
         #mse loss
         self.mse_loss = F.mse_loss(self.pred, self.target)
+        self.contrastive_loss = 0.0
 
+        '''
         #contrastive loss term
         pred_flat = self.pred.flatten(start_dim = 1).float()
         pred_flat = F.normalize(pred_flat, dim = 1)
@@ -506,6 +508,8 @@ class MotionDiTTrainer(object):
             self.contrastive_loss = sim.new_zeros(())
         lambda_contrast = 0.05
         self.loss = self.mse_loss + lambda_contrast * self.contrastive_loss
+        '''
+        self.loss = self.mse_loss
 
 
     def update(self):
