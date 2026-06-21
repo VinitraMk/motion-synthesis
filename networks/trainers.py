@@ -442,6 +442,8 @@ class MotionDiTTrainer(object):
         self.dit.train()
         motions = batch_data['motion'].to(self.device).float()
         texts = batch_data['text']
+        print(texts[0])
+        print(texts[-1])
 
         with torch.no_grad():
             self.latents = self.encoder(motions[:, :, :-4])
@@ -479,7 +481,6 @@ class MotionDiTTrainer(object):
             print("NaN in pred")
         #mse loss
         self.mse_loss = F.mse_loss(self.pred, self.target)
-        self.contrastive_loss = torch.tensor(0.0)
 
         #contrastive loss term
         pred_flat = self.pred.flatten(start_dim = 1).float()
