@@ -408,6 +408,8 @@ class MotionDiTTrainer(object):
 
         loss_pairs = [
             ("loss", "Total Loss"),
+            ("mse_loss", "MSE Loss"),
+            ("contrastive_loss", "Contrastive Loss")
         ]
 
         for key, title in loss_pairs:
@@ -463,7 +465,7 @@ class MotionDiTTrainer(object):
         if torch.isnan(self.pred).any():
             print("NaN in pred")
         #mse loss
-        mse_loss = F.mse_loss(self.pred, self.target)
+        self.mse_loss = F.mse_loss(self.pred, self.target)
 
         #contrastive loss term
         pred_flat = self.pred.flatten(start_dim = 1).float()
@@ -486,11 +488,11 @@ class MotionDiTTrainer(object):
             margin = 0.2
             diff = sim - margin
             diff = diff.clamp(min = -1.0, max = 1.0)
-            contrastive_loss = F.relu(diff).mean()
+            self.contrastive_loss = F.relu(diff).mean()
         else:
-            contrastive_loss = sim.new_zeros(())
+            self.contrastive_loss = sim.new_zeros(())
         lambda_contrast = 0.05
-        self.loss = mse_loss + lambda_contrast * contrastive_loss
+        self.loss = self.mse_loss + lambda_contrast * self.contrastive_loss
 
 
     def update(self):
@@ -505,6 +507,8 @@ class MotionDiTTrainer(object):
 
         loss_logs = OrderedDict()
         loss_logs["loss"] = self.loss.item()
+        loss_logs['mse_loss'] = self.mse_loss.item()
+        loss_logs['contrastive_loss'] = self.contrastive_loss.item()
         return loss_logs
 
     def save(self, file_name, ep, train_batch_index, total_it, history = None, best_model_state = None):
@@ -534,7 +538,11 @@ class MotionDiTTrainer(object):
 
         history = {
             "train_loss": [],
+            "train_mse_loss": [],
+            "train_contrastive_loss": [],
             "val_loss": [],
+            "val_mse_loss": [],
+            "val_contrastive_loss": []
         }
         
         print("Number of epochs:", self.opt.max_epoch)
@@ -572,7 +580,11 @@ class MotionDiTTrainer(object):
 
         # loss value init
         train_loss_avg = 0
+        train_mse_loss_avg = 0
+        train_contrastive_loss_avg = 0
         val_loss = 0
+        val_mse_loss_avg = 0
+        val_contrastive_loss_avg = 0
         best_val = float("inf")
         best_state = None
         patience = 10
@@ -591,6 +603,9 @@ class MotionDiTTrainer(object):
                 log_dict = self.update()
 
                 train_loss_sum += self.loss.item()
+                train_contrastive_loss_avg += self.contrastive_loss.item()
+                train_mse_loss_avg += self.mse_loss.item()
+
                 train_steps += 1
 
                 for k, v in log_dict.items():
@@ -620,8 +635,12 @@ class MotionDiTTrainer(object):
             #epoch += 1
 
             train_loss_avg = train_loss_sum / max(train_steps, 1)
+            train_mse_loss_avg = train_mse_loss_avg / max(train_steps, 1)
+            train_contrastive_loss_avg = train_contrastive_loss_avg / max(train_steps, 1)
 
             history["train_loss"].append(train_loss_avg)
+            history['train_mse_loss'].append(train_mse_loss_avg)
+            history['train_contrastive_loss'].append(train_contrastive_loss_avg)
 
             #print("Validation time:")
             val_loss = 0
@@ -635,7 +654,11 @@ class MotionDiTTrainer(object):
 
             denom = max(len(val_dataloader), 1)
             val_loss /= denom
+            val_contrastive_loss_avg /= denom
+            val_mse_loss_avg /= denom
             history["val_loss"].append(val_loss)
+            history["val_contrastive_loss"].append(val_contrastive_loss_avg)
+            history["val_mse_loss"].append(val_mse_loss_avg)
 
             if os.path.exists(pjoin(self.opt.model_dir, "tmp.tar")):
                 try:
