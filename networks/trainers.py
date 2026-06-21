@@ -486,7 +486,7 @@ class MotionDiTTrainer(object):
         if valid_els.numel() > 0:
             sim = sim[valid_els]
             sim = sim.clamp(min = -1.0, max = 1.0)
-            print('sim clamp:', torch.isnan(sim).any())
+            print('sim clamp:', valid_els.numel(), sim.numel(), torch.isnan(sim).any())
             margin = 0.2
             diff = sim - margin
             print('diff clamp isnan:', torch.isnan(diff).any())
