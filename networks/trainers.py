@@ -518,11 +518,11 @@ class MotionDiTTrainer(object):
         self.step([self.opt_dit])
         self.scheduler_dit.step()
 
-        loss_logs = OrderedDict()
-        loss_logs["loss"] = self.loss.detach().item()
-        loss_logs['mse_loss'] = self.mse_loss.detach().item()
-        loss_logs['contrastive_loss'] = self.contrastive_loss.detach().item()
-        return loss_logs
+        #loss_logs = OrderedDict()
+        #loss_logs["loss"] = self.loss.detach().item()
+        #loss_logs['mse_loss'] = self.mse_loss.detach().item()
+        #loss_logs['contrastive_loss'] = self.contrastive_loss.detach().item()
+        #return loss_logs
 
     def save(self, file_name, ep, train_batch_index, total_it, history = None, best_model_state = None):
         state = {
@@ -615,7 +615,7 @@ class MotionDiTTrainer(object):
                     continue
                 self.dit.train()
                 self.forward(batch_data)
-                log_dict = self.update()
+                self.update()
 
                 train_loss_sum += self.loss.detach().cpu().item()
                 train_contrastive_loss_sum += self.contrastive_loss.detach().cpu().item()
@@ -623,15 +623,15 @@ class MotionDiTTrainer(object):
 
                 train_steps += 1
 
+                it += 1
+                '''
+
                 for k, v in log_dict.items():
                     if k not in logs:
                         logs[k] = v
                     else:
                         logs[k] += v
 
-                it += 1
-
-                '''
                 if it % self.opt.log_every == 0:
                     mean_loss = OrderedDict({"val_loss": val_loss})
                     self.logger.scalar_summary("val_loss", val_loss, it)
