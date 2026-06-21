@@ -615,8 +615,10 @@ class MotionDiTTrainer(object):
             train_contrastive_loss_sum = 0.0
             train_steps = 0
             for i, batch_data in enumerate(train_dataloader):
+                '''
                 if train_batch_index != -1 and i <= train_batch_index:
                     continue
+                '''
                 self.dit.train()
                 self.forward(batch_data)
                 self.update()

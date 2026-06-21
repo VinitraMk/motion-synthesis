@@ -82,6 +82,26 @@ class MotionDatasetV2(data.Dataset):
 
     def __len__(self):
         return self.cumsum[-1]
+        #return len(self.data)
+    
+    def __getitemmotion__(self, item):
+        motion_id = item
+        motion = self.data[motion_id]
+        "Z Normalization"
+        motion = (motion - self.mean) / self.std
+
+        motion_file_id = self.loaded_ids[motion_id]
+        texts = self._load_texts(motion_file_id)
+        text = texts[0] if len(texts) > 0 else ""
+
+        return {
+            'motion': motion,
+            'file_id': motion_file_id,
+            'text': text,
+            'texts': texts
+        }
+    
+
 
     def __getitem__(self, item):
         if item != 0:
