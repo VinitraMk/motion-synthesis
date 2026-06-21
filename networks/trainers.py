@@ -477,15 +477,19 @@ class MotionDiTTrainer(object):
             device = self.device,
             dtype = torch.bool
         )
+        print('diff mask isnan', torch.isnan(diff_mask).any())
         off_diag_idx = ~torch.eye(B, dtype = torch.bool, device = self.device)
+        print('off diag isnan:', torch.isnan(off_diag_idx).any())
         valid_els = off_diag_idx & diff_mask
 
         margin = 0.2
         if valid_els.numel() > 0:
             sim = sim[valid_els]
             sim = sim.clamp(min = -10.0, max = 10.0)
+            print('sim clamp:', torch.isnan(sim).any())
             margin = 0.2
             contrastive_loss = F.relu(sim - margin).mean()
+            print('contrastive loss:', torch.isnan(contrastive_loss))
         else:
             contrastive_loss = sim.new_zeros(())
         print('mse loss vs contrastive loss: ', mse_loss, contrastive_loss)
