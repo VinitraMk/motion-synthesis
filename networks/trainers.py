@@ -506,6 +506,7 @@ class MotionDiTTrainer(object):
         else:
             self.contrastive_loss = sim.new_zeros(())
         lambda_contrast = 0.05
+        print('mse loss vs contrastive loss', self.mse_loss, self.contrastive_loss)
         self.loss = self.mse_loss + lambda_contrast * self.contrastive_loss
 
 
