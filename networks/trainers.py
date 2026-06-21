@@ -305,7 +305,7 @@ class MotionVQVAETrainer(object):
                     "VQ Loss: %.5f Codebook Loss: %.5f Commitment Loss: %.5f"
                     % (val_loss, val_rec_loss, val_vq_loss, val_codebook_loss, val_commit_loss)
                 )
-                data = torch.cat([self.recon_motions_by_part, self.motions_by_part], dim=0).detach().cpu().numpy()
+                #data = torch.cat([self.recon_motions_by_part, self.motions_by_part], dim=0).detach().cpu().numpy()
                 save_dir = pjoin(self.opt.eval_dir, "E%04d" % epoch)
                 os.makedirs(save_dir, exist_ok=True)
                 #plot_eval(data, save_dir)
@@ -424,20 +424,18 @@ class MotionDiTTrainer(object):
             plt.close()
 
     def forward(self, batch_data):
-        motions = batch_data['motion'].detach().to(self.device).float()
+        self.dit.train()
+        motions = batch_data['motion'].to(self.device).float()
         texts = batch_data['text']
+
         with torch.no_grad():
-            latents = self.encoder(motions[:, :, :-4])
+            self.latents = self.encoder(motions[:, :, :-4])
             #text_emb = self.text_encoder.encode(
                 #texts,
                 #convert_to_tensor = True,
                 #device = str(self.device)
             #).float()
-            text_tokens, text_mask = self.text_encoder.encode_tokens(texts)
-        self.latents = latents.detach().clone() # to ensure that inference tensors are not created
-        #self.text_emb = text_emb.clone() # to ensure that inference tensors are not created
-        self.text_tokens = text_tokens.detach().clone()
-        self.text_mask = text_mask.detach().clone()
+            self.text_tokens, self.text_mask = self.text_encoder.encode_tokens(texts)
 
         self.noise = torch.randn_like(self.latents)
         B = self.latents.shape[0]
@@ -464,7 +462,6 @@ class MotionDiTTrainer(object):
         # Check output of DiT and loss
         if torch.isnan(self.pred).any():
             print("NaN in pred")
-
         #mse loss
         mse_loss = F.mse_loss(self.pred, self.target)
 
@@ -480,10 +477,15 @@ class MotionDiTTrainer(object):
         )
         off_diag_idx = ~torch.eye(B, dtype = torch.bool, device = self.device)
         valid_els = off_diag_idx & diff_mask
-        sim = sim[valid_els]
 
         margin = 0.2
-        contrastive_loss = F.relu(sim - margin).mean()
+        if valid_els.numel() > 0:
+            sim = sim[valid_els]
+            sim = sim.clamp(min = -10.0, max = 10.0)
+            margin = 0.2
+            contrastive_loss = F.relu(sim - margin).mean()
+        else:
+            contrastive_loss = sim.new_zeros(())
 
         lambda_contrast = 0.05
         self.loss = mse_loss + lambda_contrast * contrastive_loss
