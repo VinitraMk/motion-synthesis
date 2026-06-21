@@ -492,6 +492,7 @@ class MotionDiTTrainer(object):
             dtype = torch.bool
         )
         off_diag_idx = ~torch.eye(B, dtype = torch.bool, device = self.device)
+        print('diff text in batch', diff_mask.sum().item())
         valid_els = off_diag_idx & diff_mask
         true_count = valid_els.sum().item()
 
