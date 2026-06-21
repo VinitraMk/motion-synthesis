@@ -519,9 +519,9 @@ class MotionDiTTrainer(object):
         self.scheduler_dit.step()
 
         loss_logs = OrderedDict()
-        loss_logs["loss"] = self.loss.item()
-        loss_logs['mse_loss'] = self.mse_loss.item()
-        loss_logs['contrastive_loss'] = self.contrastive_loss.item()
+        loss_logs["loss"] = self.loss.detach().item()
+        loss_logs['mse_loss'] = self.mse_loss.detach().item()
+        loss_logs['contrastive_loss'] = self.contrastive_loss.detach().item()
         return loss_logs
 
     def save(self, file_name, ep, train_batch_index, total_it, history = None, best_model_state = None):
