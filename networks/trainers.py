@@ -468,9 +468,7 @@ class MotionDiTTrainer(object):
         #contrastive loss term
         pred_flat = self.pred.flatten(start_dim = 1).float()
         pred_flat = F.normalize(pred_flat, dim = 1)
-        print('pred flat norm isnan', torch.isnan(pred_flat).any())
         sim = pred_flat @ pred_flat.t()
-        print('sim isnan', torch.isnan(sim).any())
 
         diff_mask = torch.tensor(
             [[texts[i] != texts[j] for j in range(B)] for i in range(B)],
@@ -478,25 +476,19 @@ class MotionDiTTrainer(object):
             dtype = torch.bool
         )
         off_diag_idx = ~torch.eye(B, dtype = torch.bool, device = self.device)
-        print('off diag isnan:', torch.isnan(off_diag_idx).any())
         valid_els = off_diag_idx & diff_mask
-        print('true count vs false count: ', valid_els.sum().item(), (~valid_els).sum().item())
         true_count = valid_els.sum().item()
 
         margin = 0.2
         if true_count > 0:
             sim = sim[valid_els]
             sim = sim.clamp(min = -1.0, max = 1.0)
-            print('sim clamp:', valid_els.numel(), sim.numel(), torch.isnan(sim).any())
             margin = 0.2
             diff = sim - margin
-            print('diff clamp isnan:', torch.isnan(diff).any())
             diff = diff.clamp(min = -1.0, max = 1.0)
             contrastive_loss = F.relu(diff).mean()
-            print('contrastive loss:', torch.isnan(contrastive_loss).any())
         else:
             contrastive_loss = sim.new_zeros(())
-        print('mse loss vs contrastive loss: ', mse_loss, contrastive_loss)
         lambda_contrast = 0.05
         self.loss = mse_loss + lambda_contrast * contrastive_loss
 
