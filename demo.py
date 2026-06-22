@@ -48,7 +48,7 @@ class MotionPipeline:
         return motion * self.std + self.mean
     
     @torch.no_grad()
-    def __call__(self, prompt, generator, num_inference_steps=50, seed=42, latent_shape=(1, 512), eta = 0.0):
+    def __calltest__(self, prompt, generator, num_inference_steps=50, seed=42, latent_shape=(1, 512), eta = 0.0):
         #generator = torch.Generator(device=self.device).manual_seed(seed)
 
         z1 = torch.randn(latent_shape, generator=generator, device=self.device)
@@ -94,6 +94,34 @@ class MotionPipeline:
         motion_joints2 = recover_from_ric(denormalized_motion2, self.joints_num)
 
         return motion_joints1, motion_joints2
+    
+    @torch.no_grad()
+    def __call__(self, prompt, generator, num_inference_steps=50, seed=42, latent_shape=(1, 512), eta = 0.0):
+        #generator = torch.Generator(device=self.device).manual_seed(seed)
+
+        z = torch.randn(latent_shape, generator=generator, device=self.device)
+
+        #cond = self.text_embedder.encode(prompt, convert_to_tensor = True, device = str(self.device)).clone()
+        text_tokens, text_mask = self.text_embedder.encode_tokens([prompt])
+        #print(prompt, num_inference_steps)
+        #print(text_tokens.mean().item(), text_tokens.std().item())
+
+        for d_step in range(num_inference_steps):
+            t = torch.full((z.shape[0], ), fill_value = d_step / (num_inference_steps - 1), device = self.device)
+            t = t.clamp(1e-4, 1.0)
+            d = torch.zeros(z.shape[0], device=self.device)
+            alpha = 1.0 / num_inference_steps
+
+            v = self.dit(z, t, d, text_tokens, text_mask)
+            z = z + alpha * v
+
+
+        motion = self.decoder(z)
+        denormalized_motion = self.denormalize_motion(motion[0])
+
+        motion_joints = recover_from_ric(denormalized_motion, self.joints_num)
+
+        return motion_joints
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -123,7 +151,7 @@ def load_models(device, model_dir, meta_dir):
     #text_embedder.eval()
     text_encoder = TextTokenEncoder(device = device).to(device)
     text_encoder.eval()
-    dit_chkpt = torch.load(pjoin(model_dir, 'dit_crossattn_micro_v2.tar'), map_location = device)
+    dit_chkpt = torch.load(pjoin(model_dir, 'dit_crossattn_debug.tar'), map_location = device)
     dit = DiT(
         input_size = 512,
         hidden_size=1152,
@@ -212,33 +240,23 @@ def run_inference(pipe, prompt, num_steps, seed, device, outputs_path):
     # Replace this call with your actual pipeline invocation
     #prompt = 'run'
     gen = torch.Generator(device).manual_seed(0)
-    result1, result2 = pipe(
+    result = pipe(
         prompt=prompt,
         generator = gen,
         num_inference_steps=num_steps
     )
 
-    motion_joints1, motion_joints2 = result1, result2
+    motion_joints = result
     all_gif_files = [fname for fname in os.listdir(outputs_path) if ".gif" in fname]
     file_id = len(all_gif_files)
     render_skeleton_animation(
-        joints_recon=motion_joints1,
+        joints_recon=motion_joints,
         output_path_no_ext=pjoin(outputs_path, f'inference_test_clip_{file_id}'),
         clip_id=f'inference_test_clip_{file_id}',
-        text = "a person walking slowly",
+        text = prompt,
         recon_caption='Diffusion inference'
     )
-    all_gif_files = [fname for fname in os.listdir(outputs_path) if ".gif" in fname]
-    file_id = len(all_gif_files)
-    render_skeleton_animation(
-        joints_recon=motion_joints2,
-        output_path_no_ext=pjoin(outputs_path, f'inference_test_clip_{file_id}'),
-        clip_id=f'inference_test_clip_{file_id}',
-        text = "a person twists from side to side",
-        recon_caption='Diffusion inference'
-    )
-
-
+    
 def main():
     args = parse_args()
     set_seed(args.seed)

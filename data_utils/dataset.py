@@ -75,6 +75,8 @@ class MotionDatasetV2(data.Dataset):
                     caption = parts[0].strip()
                     if caption:
                         texts.append(caption)
+        else:
+            ValueError(f'Folder {self.opt.text_dir} not found under dataset folder')
         return texts
 
     def inv_transform(self, data):
