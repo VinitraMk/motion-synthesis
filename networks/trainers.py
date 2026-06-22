@@ -404,6 +404,7 @@ class MotionDiTTrainer(object):
 
         pred_speed_xy = torch.norm(pred_vel[..., [0, 2]], dim = -1)
         loss = (contact * (pred_speed_xy ** 2)).sum() / (contact.sum() + 1e-6)
+        print('loss shape', loss.shape)
 
         return loss
 
@@ -532,15 +533,18 @@ class MotionDiTTrainer(object):
         lambda_contrast = 0.05
 
         # foot contact component
-        target_motions = self.denormalize_motion(self.target)
-        pred_motions = self.denormalize_motion(self.pred)
+        #print('target pred shape: ', self.target.shape, self.pred.shape, self.std.shape, self.mean.shape)
 
-        target_motions_jts = self.decoder(target_motions)
-        pred_motions_jts = self.decoder(pred_motions)
-        self.contact_loss = self._compute_foot_contact_loss(
-            predicted_joints=pred_motions_jts,
-            target_joints=target_motions_jts
-        )
+        #target_motions_jts = self.decoder(self.target)
+        #pred_motions_jts = self.decoder(self.pred)
+        #target_motions_jts = self.denormalize_motion(target_motions_jts.detach().cpu())
+        #pred_motions_jts = self.denormalize_motion(pred_motions_jts.detach().cpu())
+        #print('joints shape', target_motions_jts.shape, pred_motions_jts.shape)
+        #self.contact_loss = self._compute_foot_contact_loss(
+            #predicted_joints=pred_motions_jts,
+            #target_joints=target_motions_jts
+        #)
+        self.contact_loss = F.mse_loss(self.pred[..., 259:263], self.target[..., 259:263])
         lambda_foot = 0.01
 
 
