@@ -398,11 +398,14 @@ class MotionDiTTrainer(object):
         
     def _compute_foot_contact_loss(self, predicted_joints, target_joints, foot_ids = [7, 8], height_thresh = 0.08, vel_thresh = 0.01):
 
+        B, T, J, _ = predicted_joints.shape
+
         feet_pred = predicted_joints[:, :, foot_ids, :]
         feet_target = target_joints[:, :, foot_ids, :]
 
         target_vel = feet_target[:, 1:] - feet_target[:, :-1]
         pred_vel = feet_pred[:, 1:] - feet_pred[:, :-1]
+        root_vel_loss = F.mse_loss(pred_vel, target_vel)
 
         target_speed_xy = torch.norm(target_vel[..., [0, 2]], dim = -1)
         target_height = feet_target[:, :-1, :, 1]
@@ -410,9 +413,16 @@ class MotionDiTTrainer(object):
         contact = contact.float()
 
         pred_speed_xy = torch.norm(pred_vel[..., [0, 2]], dim = -1)
-        loss = (contact * (pred_speed_xy ** 2)).sum() / (contact.sum() + 1e-6)
 
-        return loss
+        foot_pos_error = torch.norm(feet_pred - feet_target, dim = -1)
+        num = contact.sum()
+        if num < 1:
+            return predicted_joints.new_zeros(())
+
+        contact_loss = (contact * (pred_speed_xy ** 2)).sum() / num
+        foot_pos_loss = (contact * foot_pos_error).sum() / num
+
+        return contact_loss, foot_pos_loss, root_vel_loss
 
     @staticmethod
     def zero_grad(opt_list):
@@ -548,15 +558,18 @@ class MotionDiTTrainer(object):
         pred_motions_jts = recover_from_ric(pred_motions.float(), self.joints_num)
         #print('joints shape', target_motions_jts.shape, pred_motions_jts.shape)
 
-        self.contact_loss = self._compute_foot_contact_loss(
+        self.contact_loss, self.foot_pos_loss, self.root_vel_loss = self._compute_foot_contact_loss(
             predicted_joints=pred_motions_jts,
             target_joints=target_motions_jts
         )
         #self.contact_loss = F.mse_loss(self.pred[..., 259:263], self.target[..., 259:263])
         lambda_foot = 0.01
+        lambda_pos = 0.005
+        lambda_root = 0.005
+
 
         # total loss computation
-        self.loss = self.mse_loss + (lambda_contrast * self.contrastive_loss) + (lambda_foot * self.contact_loss)
+        self.loss = self.mse_loss + (lambda_contrast * self.contrastive_loss) + (lambda_foot * self.contact_loss) + (lambda_pos * self.foot_pos_loss) + (lambda_root * self.root_vel_loss)
 
 
     def update(self):
@@ -608,10 +621,14 @@ class MotionDiTTrainer(object):
             "train_mse_loss": [],
             "train_contrastive_loss": [],
             "train_contact_loss": [],
+            "train_feet_pos_loss": [],
+            "train_root_vel_loss": [],
             "val_loss": [],
             "val_mse_loss": [],
             "val_contrastive_loss": [],
-            "val_contact_loss": []
+            "val_contact_loss": [],
+            "val_feet_pos_loss": [],
+            "val_root_vel_loss": []
         }
         
         print("Number of epochs:", self.opt.max_epoch)
@@ -649,8 +666,6 @@ class MotionDiTTrainer(object):
 
         # loss value init
         train_loss = 0
-        train_mse_loss_avg = 0
-        train_contrastive_loss_avg = 0
         val_loss = 0
         val_mse_loss_avg = 0
         val_contrastive_loss_avg = 0
@@ -666,6 +681,8 @@ class MotionDiTTrainer(object):
             train_mse_loss_sum = 0.0
             train_contrastive_loss_sum = 0.0
             train_contact_loss_sum = 0.0
+            train_root_loss_sum = 0.0
+            train_feet_pos_sum = 0.0
             train_steps = 0
             for i, batch_data in enumerate(train_dataloader):
                 '''
@@ -680,6 +697,8 @@ class MotionDiTTrainer(object):
                 train_contrastive_loss_sum += self.contrastive_loss.detach().cpu().item()
                 train_mse_loss_sum += self.mse_loss.detach().cpu().item()
                 train_contact_loss_sum += self.contact_loss.detach().cpu().item()
+                train_root_loss_sum += self.root_vel_loss.detach().cpu().item()
+                train_feet_pos_sum += self.foot_pos_loss.detach().cpu().item()
 
                 train_steps += 1
 
@@ -713,17 +732,23 @@ class MotionDiTTrainer(object):
             train_mse_loss_sum = train_mse_loss_sum / max(train_steps, 1)
             train_contrastive_loss_sum = train_contrastive_loss_sum / max(train_steps, 1)
             train_contact_loss_sum = train_contact_loss_sum / max(train_steps, 1)
+            train_feet_pos_sum = train_feet_pos_sum / max(train_steps, 1)
+            train_root_loss_sum = train_root_loss_sum / max(train_steps, 1)
 
             history["train_loss"].append(train_loss)
             history['train_mse_loss'].append(train_mse_loss_sum)
             history['train_contrastive_loss'].append(train_contrastive_loss_sum)
             history['train_contact_loss'].append(train_contact_loss_sum)
+            history['train_feet_pos_loss'].append(train_feet_pos_sum)
+            history['train_root_vel_loss'].append(train_root_loss_sum)
 
             #print("Validation time:")
             val_loss = 0
             val_contrastive_loss_avg = 0
             val_mse_loss_avg = 0
             val_contact_loss_avg = 0
+            val_feet_poss_loss_avg = 0
+            val_root_vel_loss_avg = 0
 
             with torch.no_grad():
                 self.dit.eval()
@@ -734,15 +759,21 @@ class MotionDiTTrainer(object):
                     val_contrastive_loss_avg += self.contrastive_loss.item()
                     val_mse_loss_avg += self.mse_loss.item()
                     val_contact_loss_avg += self.contact_loss.item()
+                    val_feet_poss_loss_avg += self.foot_pos_loss.item()
+                    val_root_vel_loss_avg += self.root_vel_loss.item()
 
             denom = max(len(val_dataloader), 1)
             val_loss /= denom
             val_contrastive_loss_avg /= denom
             val_mse_loss_avg /= denom
+            val_feet_poss_loss_avg /= denom
+            val_root_vel_loss_avg /= denom
             history["val_loss"].append(val_loss)
             history["val_contrastive_loss"].append(val_contrastive_loss_avg)
             history["val_mse_loss"].append(val_mse_loss_avg)
             history["val_contact_loss"].append(val_contact_loss_avg)
+            history["val_feet_pos_loss"].append(val_feet_poss_loss_avg)
+            history["val_root_vel_loss"].append(val_root_vel_loss_avg)
 
             if os.path.exists(pjoin(self.opt.model_dir, "tmp.tar")):
                 try:
