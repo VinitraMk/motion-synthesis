@@ -113,7 +113,7 @@ class MotionDatasetV2(data.Dataset):
             motion_id = 0
             idx = 0
         motion = self.data[motion_id][idx:idx+self.opt.window_size]
-        assert motion.shape[0] == self.opt.window_size, f"Bad T at idx {idx}: {motion.shape}"
+        assert motion.shape[0] == self.opt.window_size and motion.shape[1] == 263, f"Bad T at idx {idx}: {motion.shape}"
         "Z Normalization"
         motion = (motion - self.mean) / self.std
 
@@ -204,6 +204,7 @@ class PartMotionDatasetV2(MotionDatasetV2):
     def __getitem__(self, item):
         motion_data = super().__getitem__(item)   # (T, 263), already normalized
         motion = motion_data['motion']
+        assert motion.shape[0] == self.opt.window_size and motion.shape[1] == 263, f"Bad T at idx {item}: {motion.shape}"
 
         T, D = motion.shape
         P = len(self.part_names)
@@ -218,7 +219,7 @@ class PartMotionDatasetV2(MotionDatasetV2):
         return {
             "motion": motion.astype(np.float32),              # (T, D) = (T, 263)
             "motion_parts": motion_parts.astype(np.float32),  # (T, P, D_part_max)
-            "texts": motion_data['texts'],
+            #"texts": motion_data['texts'],
             'file_id': motion_data['file_id'],
             'text': motion_data['text']
         }
