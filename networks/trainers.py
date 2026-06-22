@@ -407,19 +407,18 @@ class MotionDiTTrainer(object):
         pred_vel = feet_pred[:, 1:] - feet_pred[:, :-1]
         root_vel_loss = F.mse_loss(pred_vel, target_vel)
 
-        target_speed_xy = torch.norm(target_vel[..., [0, 2]], dim = -1)
-        target_height = feet_target[:, :-1, :, 1]
-        contact = (target_height < height_thresh) & (target_speed_xy < vel_thresh)
-        contact = contact.float()
+        #target_speed_xy = torch.norm(target_vel[..., [0, 2]], dim = -1)
+        target_height = feet_target[..., 1]
+        contact = (target_height < height_thresh).float()
 
         pred_speed_xy = torch.norm(pred_vel[..., [0, 2]], dim = -1)
 
         foot_pos_error = torch.norm(feet_pred - feet_target, dim = -1)
         num = contact.sum()
         if num < 1:
-            return predicted_joints.new_zeros(())
+            return predicted_joints.new_zeros(()), predicted_joints.new_zeros(()), root_vel_loss
 
-        contact_loss = (contact * (pred_speed_xy ** 2)).sum() / num
+        contact_loss = (contact[:, :-1, :] * (pred_speed_xy ** 2)).sum() / num
         foot_pos_loss = (contact * foot_pos_error).sum() / num
 
         return contact_loss, foot_pos_loss, root_vel_loss
@@ -452,7 +451,7 @@ class MotionDiTTrainer(object):
             ("mse_loss", "MSE Loss"),
             ("contrastive_loss", "Contrastive Loss"),
             ("contact_loss", "Contact Loss"),
-            ("feet_poss_loss", "Feet Position Loss"),
+            ("feet_pos_loss", "Feet Position Loss"),
             ("root_vel_loss", "Root Velocity Loss")
         ]
 
