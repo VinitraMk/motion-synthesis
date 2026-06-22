@@ -13,7 +13,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from networks.autoencoder_modules import MovementConvEncoder, MovementConvDecoder
 from utils.pretrained_model_utils import get_pretrained_vae, get_pretrained_text_encoder
 from networks.transformer_modules import TextTokenEncoder
-from copy import deepcopy
+import numpy as np
 
 class Logger(object):
   def __init__(self, log_dir):
@@ -358,6 +358,9 @@ class MotionDiTTrainer(object):
         self.text_encoder = TextTokenEncoder(device = self.device).to(self.device)
         self.text_encoder.eval()
 
+        self.mean = np.load(pjoin(self.opt.meta_dir, 'mean.npy'))
+        self.std = np.load(pjoin(self.opt.meta_dir, 'std.npy'))
+
         self._init_vae(autoencoder_type)
 
     def _get_param_groups(self, model: DiT, weight_decay: float = 1e-4):
@@ -385,6 +388,24 @@ class MotionDiTTrainer(object):
             self.decoder.to(self.device)
         else:
             raise ValueError(f"Unknown vae_name: {autoencoder_type}")
+        
+    def _compute_foot_contact_loss(self, predicted_joints, target_joints, foot_ids = [7, 8], height_thresh = 0.08, vel_thresh = 0.01):
+
+        feet_pred = predicted_joints[:, :, foot_ids, :]
+        feet_target = target_joints[:, :, foot_ids, :]
+
+        target_vel = feet_target[:, 1:] - feet_target[:, :-1]
+        pred_vel = feet_pred[:, 1:] - feet_pred[:, :-1]
+
+        target_speed_xy = torch.norm(target_vel[..., [0, 2]], dim = -1)
+        target_height = feet_target[:, :-1, :, 1]
+        contact = (target_height < height_thresh) & (target_speed_xy < vel_thresh)
+        contact = contact.float()
+
+        pred_speed_xy = torch.norm(pred_vel[..., [0, 2]], dim = -1)
+        loss = (contact * (pred_speed_xy ** 2)).sum() / (contact.sum() + 1e-6)
+
+        return loss
 
     @staticmethod
     def zero_grad(opt_list):
@@ -401,6 +422,9 @@ class MotionDiTTrainer(object):
         for opt in opt_list:
             opt.step()
 
+    def denormalize_motion(self, motion):
+        return motion * self.std + self.mean
+
     def save_loss_data(self, history):
 
         os.makedirs(self.opt.experiment_dir, exist_ok=True)
@@ -409,7 +433,8 @@ class MotionDiTTrainer(object):
         loss_pairs = [
             ("loss", "Total Loss"),
             ("mse_loss", "MSE Loss"),
-            ("contrastive_loss", "Contrastive Loss")
+            ("contrastive_loss", "Contrastive Loss"),
+            ("contact_loss", "Contact Loss")
         ]
 
         for key, title in loss_pairs:
@@ -505,7 +530,22 @@ class MotionDiTTrainer(object):
         else:
             self.contrastive_loss = sim.new_zeros(())
         lambda_contrast = 0.05
-        self.loss = self.mse_loss + lambda_contrast * self.contrastive_loss
+
+        # foot contact component
+        target_motions = self.denormalize_motion(self.target)
+        pred_motions = self.denormalize_motion(self.pred)
+
+        target_motions_jts = self.decoder(target_motions)
+        pred_motions_jts = self.decoder(pred_motions)
+        self.contact_loss = self._compute_foot_contact_loss(
+            predicted_joints=pred_motions_jts,
+            target_joints=target_motions_jts
+        )
+        lambda_foot = 0.01
+
+
+        # total loss computation
+        self.loss = self.mse_loss + (lambda_contrast * self.contrastive_loss) + (lambda_foot * self.contact_loss)
 
 
     def update(self):
@@ -556,9 +596,11 @@ class MotionDiTTrainer(object):
             "train_loss": [],
             "train_mse_loss": [],
             "train_contrastive_loss": [],
+            "train_contact_loss": [],
             "val_loss": [],
             "val_mse_loss": [],
-            "val_contrastive_loss": []
+            "val_contrastive_loss": [],
+            "val_contact_loss": []
         }
         
         print("Number of epochs:", self.opt.max_epoch)
@@ -595,7 +637,7 @@ class MotionDiTTrainer(object):
         logs = OrderedDict()
 
         # loss value init
-        train_loss_avg = 0
+        train_loss = 0
         train_mse_loss_avg = 0
         train_contrastive_loss_avg = 0
         val_loss = 0
@@ -609,9 +651,10 @@ class MotionDiTTrainer(object):
 
         while epoch < self.opt.max_epoch:
             
-            train_loss_sum = 0.0
+            train_loss = 0.0
             train_mse_loss_sum = 0.0
             train_contrastive_loss_sum = 0.0
+            train_contact_loss_sum = 0.0
             train_steps = 0
             for i, batch_data in enumerate(train_dataloader):
                 '''
@@ -622,9 +665,10 @@ class MotionDiTTrainer(object):
                 self.forward(batch_data)
                 self.update()
 
-                train_loss_sum += self.loss.detach().cpu().item()
+                train_loss += self.loss.detach().cpu().item()
                 train_contrastive_loss_sum += self.contrastive_loss.detach().cpu().item()
                 train_mse_loss_sum += self.mse_loss.detach().cpu().item()
+                train_contact_loss_sum += self.contact_loss.detach().cpu().item()
 
                 train_steps += 1
 
@@ -654,18 +698,21 @@ class MotionDiTTrainer(object):
 
             #epoch += 1
 
-            train_loss_avg = train_loss_sum / max(train_steps, 1)
-            train_mse_loss_avg = train_mse_loss_sum / max(train_steps, 1)
-            train_contrastive_loss_avg = train_contrastive_loss_sum / max(train_steps, 1)
+            train_loss = train_loss / max(train_steps, 1)
+            train_mse_loss_sum = train_mse_loss_sum / max(train_steps, 1)
+            train_contrastive_loss_sum = train_contrastive_loss_sum / max(train_steps, 1)
+            train_contact_loss_sum = train_contact_loss_sum / max(train_steps, 1)
 
-            history["train_loss"].append(train_loss_avg)
-            history['train_mse_loss'].append(train_mse_loss_avg)
-            history['train_contrastive_loss'].append(train_contrastive_loss_avg)
+            history["train_loss"].append(train_loss)
+            history['train_mse_loss'].append(train_mse_loss_sum)
+            history['train_contrastive_loss'].append(train_contrastive_loss_sum)
+            history['train_contact_loss'].append(train_contact_loss_sum)
 
             #print("Validation time:")
             val_loss = 0
             val_contrastive_loss_avg = 0
             val_mse_loss_avg = 0
+            val_contact_loss_avg = 0
 
             with torch.no_grad():
                 self.dit.eval()
@@ -675,6 +722,7 @@ class MotionDiTTrainer(object):
                     val_loss += self.loss.item()
                     val_contrastive_loss_avg += self.contrastive_loss.item()
                     val_mse_loss_avg += self.mse_loss.item()
+                    val_contact_loss_avg += self.contact_loss.item()
 
             denom = max(len(val_dataloader), 1)
             val_loss /= denom
@@ -683,6 +731,7 @@ class MotionDiTTrainer(object):
             history["val_loss"].append(val_loss)
             history["val_contrastive_loss"].append(val_contrastive_loss_avg)
             history["val_mse_loss"].append(val_mse_loss_avg)
+            history["val_contact_loss"].append(val_contact_loss_avg)
 
             if os.path.exists(pjoin(self.opt.model_dir, "tmp.tar")):
                 try:
@@ -714,7 +763,7 @@ class MotionDiTTrainer(object):
                 print("Epoch:", epoch)
                 print(
                     "Train Loss: %.5f"
-                    % (train_loss_avg)
+                    % (train_loss)
                 )
                 print(
                     "Validation Loss: %.5f"
@@ -733,7 +782,7 @@ class MotionDiTTrainer(object):
         print("Epoch:", epoch)
         print(
             "Train Loss: %.5f"
-            % (train_loss_avg)
+            % (train_loss)
         )
         print(
             "Validation Loss: %.5f"
