@@ -451,7 +451,9 @@ class MotionDiTTrainer(object):
             ("loss", "Total Loss"),
             ("mse_loss", "MSE Loss"),
             ("contrastive_loss", "Contrastive Loss"),
-            ("contact_loss", "Contact Loss")
+            ("contact_loss", "Contact Loss"),
+            ("feet_poss_loss", "Feet Position Loss"),
+            ("root_vel_loss", "Root Velocity Loss")
         ]
 
         for key, title in loss_pairs:
