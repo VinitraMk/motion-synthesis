@@ -113,6 +113,7 @@ class MotionDatasetV2(data.Dataset):
             motion_id = 0
             idx = 0
         motion = self.data[motion_id][idx:idx+self.opt.window_size]
+        assert motion.shape[0] == self.opt.window_size, f"Bad T at idx {idx}: {motion.shape}"
         "Z Normalization"
         motion = (motion - self.mean) / self.std
 
