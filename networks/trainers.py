@@ -442,8 +442,6 @@ class MotionDiTTrainer(object):
         self.dit.train()
         motions = batch_data['motion'].to(self.device).float()
         texts = batch_data['text']
-        print(texts[0])
-        print(texts[-1])
 
         with torch.no_grad():
             self.latents = self.encoder(motions[:, :, :-4])
@@ -493,7 +491,6 @@ class MotionDiTTrainer(object):
             dtype = torch.bool
         )
         off_diag_idx = ~torch.eye(B, dtype = torch.bool, device = self.device)
-        print('diff text in batch', diff_mask.sum().item())
         valid_els = off_diag_idx & diff_mask
         true_count = valid_els.sum().item()
 
@@ -508,7 +505,6 @@ class MotionDiTTrainer(object):
         else:
             self.contrastive_loss = sim.new_zeros(())
         lambda_contrast = 0.05
-        print('mse loss vs contrastive loss', self.mse_loss, self.contrastive_loss)
         self.loss = self.mse_loss + lambda_contrast * self.contrastive_loss
 
 
