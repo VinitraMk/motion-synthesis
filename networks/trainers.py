@@ -14,6 +14,8 @@ from networks.autoencoder_modules import MovementConvEncoder, MovementConvDecode
 from utils.pretrained_model_utils import get_pretrained_vae, get_pretrained_text_encoder
 from networks.transformer_modules import TextTokenEncoder
 import numpy as np
+from data_utils.motion_processor import recover_from_ric
+import json
 
 class Logger(object):
   def __init__(self, log_dir):
@@ -361,6 +363,11 @@ class MotionDiTTrainer(object):
         self.mean = np.load(pjoin(self.opt.meta_dir, 'mean.npy'))
         self.std = np.load(pjoin(self.opt.meta_dir, 'std.npy'))
 
+        with open(pjoin(self.opt.meta_dir, 'part_mapping.json'), 'r') as f:
+            mapping = json.load(f)
+
+        self.joints_num = mapping['joints_num']
+
         self._init_vae(autoencoder_type)
 
     def _get_param_groups(self, model: DiT, weight_decay: float = 1e-4):
@@ -404,7 +411,6 @@ class MotionDiTTrainer(object):
 
         pred_speed_xy = torch.norm(pred_vel[..., [0, 2]], dim = -1)
         loss = (contact * (pred_speed_xy ** 2)).sum() / (contact.sum() + 1e-6)
-        print('loss shape', loss.shape)
 
         return loss
 
@@ -533,20 +539,21 @@ class MotionDiTTrainer(object):
         lambda_contrast = 0.05
 
         # foot contact component
-        #print('target pred shape: ', self.target.shape, self.pred.shape, self.std.shape, self.mean.shape)
 
-        #target_motions_jts = self.decoder(self.target)
-        #pred_motions_jts = self.decoder(self.pred)
-        #target_motions_jts = self.denormalize_motion(target_motions_jts.detach().cpu())
-        #pred_motions_jts = self.denormalize_motion(pred_motions_jts.detach().cpu())
+        target_motions = self.decoder(self.target)
+        pred_motions = self.decoder(self.pred)
+        target_motions = self.denormalize_motion(target_motions.detach().cpu())
+        pred_motions = self.denormalize_motion(pred_motions.detach().cpu())
+        target_motions_jts = recover_from_ric(target_motions.float(), self.joints_num)
+        pred_motions_jts = recover_from_ric(pred_motions.float(), self.joints_num)
         #print('joints shape', target_motions_jts.shape, pred_motions_jts.shape)
-        #self.contact_loss = self._compute_foot_contact_loss(
-            #predicted_joints=pred_motions_jts,
-            #target_joints=target_motions_jts
-        #)
-        self.contact_loss = F.mse_loss(self.pred[..., 259:263], self.target[..., 259:263])
-        lambda_foot = 0.01
 
+        self.contact_loss = self._compute_foot_contact_loss(
+            predicted_joints=pred_motions_jts,
+            target_joints=target_motions_jts
+        )
+        #self.contact_loss = F.mse_loss(self.pred[..., 259:263], self.target[..., 259:263])
+        lambda_foot = 0.01
 
         # total loss computation
         self.loss = self.mse_loss + (lambda_contrast * self.contrastive_loss) + (lambda_foot * self.contact_loss)
