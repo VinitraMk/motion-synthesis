@@ -131,6 +131,7 @@ def parse_args():
     parser.add_argument("--meta_dir", type=str, default="checkpoints/HumanML3D/test/meta")
     parser.add_argument("--gif_name", type=str, default="sample.gif")
     parser.add_argument("--num_steps", type=int, default=50)
+    parser.add_argument('--window_size', type = int, default = 40)
     parser.add_argument("--guidance_scale", type=float, default=7.5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="cpu")
@@ -142,7 +143,7 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def load_models(device, model_dir, meta_dir):
+def load_models(device, model_dir, meta_dir, window_size = 40):
     
     enc, dec = get_pretrained_vae(model_dir=model_dir)
     enc.eval()
@@ -155,7 +156,8 @@ def load_models(device, model_dir, meta_dir):
     dit = DiT(
         input_size = 512,
         hidden_size=1152,
-        text_dim=384
+        text_dim=384,
+        max_seq_len=window_size//4
     )
     dit.load_state_dict(dit_chkpt['dit'])
     dit.to(device)
@@ -239,7 +241,7 @@ def run_inference(pipe, prompt, num_steps, seed, device, outputs_path):
 
     # Replace this call with your actual pipeline invocation
     #prompt = 'run'
-    gen = torch.Generator(device).manual_seed(0)
+    gen = torch.Generator(device).manual_seed(42)
     result = pipe(
         prompt=prompt,
         generator = gen,
@@ -266,7 +268,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     save_path = output_dir / args.gif_name
 
-    pipe, _ = load_models(device, args.model_dir, args.meta_dir)
+    pipe, _ = load_models(device, args.model_dir, args.meta_dir, args.window_size)
     print('args prompt: ', args.prompt)
 
     run_inference(
