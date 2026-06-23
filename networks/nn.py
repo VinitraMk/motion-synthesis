@@ -123,7 +123,7 @@ class DiT(nn.Module):
         text_dim=384,
         depth=9,
         num_heads=4,
-        max_seq_len=15, # output window size of the Dataset class
+        max_seq_len=10, # output window size of the Dataset class
         mlp_ratio=4.0,
         learn_sigma=False,
     ):
