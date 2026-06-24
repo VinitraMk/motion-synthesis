@@ -5,6 +5,7 @@ import numpy as np
 import os
 from os.path import join as pjoin
 import json
+import torch.nn.functional as F
 
 class MotionDatasetV2(data.Dataset):
     def __init__(self, opt, mean, std, split_file):
@@ -22,16 +23,20 @@ class MotionDatasetV2(data.Dataset):
         for name in tqdm(id_list):
             try:
                 motion = np.load(pjoin(opt.motion_dir, name + '.npy'))
-                if motion.shape[0] < opt.window_size:
-                    continue
-                self.lengths.append(motion.shape[0] - opt.window_size)
+                if motion.shape[0] < opt.max_motion_length:
+                    pad_amt = opt.max_motion_length - motion.shape[0]
+                    motion = np.pad(motion, ((0, pad_amt), (0, 0)), mode = 'constant', constant_values = 0)
+                #self.lengths.append(motion.shape[0] - opt.max_seq_)
+                else:
+                    motion = motion[:opt.max_motion_length, :]
                 self.data.append(motion)
                 self.loaded_ids.append(name)
-            except:
+            except Exception as e:
+                print('Dataset load exception: ', e)
                 # Some motion may not exist in KIT dataset
                 pass
 
-        self.cumsum = np.cumsum([0] + self.lengths)
+        #self.cumsum = np.cumsum([0] + self.lengths)
 
         if opt.is_train:
             # root_rot_velocity (B, seq_len, 1)
@@ -60,7 +65,8 @@ class MotionDatasetV2(data.Dataset):
         self.mean = mean
         self.std = std
         print(f'Motion shape (B, T, D): ({len(self.data)}, {self.data[0].shape[0]}, {self.data[0].shape[1]})')
-        print("Total number of motions {}, snippets {}".format(len(self.data), self.cumsum[-1]))
+        #print("Total number of motions {}, snippets {}".format(len(self.data), self.cumsum[-1]))
+        print("Total number of motions {}".format(len(self.data)))
 
     def _load_texts(self, name):
         text_path = pjoin(self.opt.text_dir, name + '.txt')
@@ -83,10 +89,10 @@ class MotionDatasetV2(data.Dataset):
         return data * self.std + self.mean
 
     def __len__(self):
-        return self.cumsum[-1]
-        #return len(self.data)
+        #return self.cumsum[-1]
+        return len(self.data)
     
-    def __getitemmotion__(self, item):
+    def __getitem__(self, item):
         motion_id = item
         motion = self.data[motion_id]
         "Z Normalization"
@@ -105,7 +111,7 @@ class MotionDatasetV2(data.Dataset):
     
 
 
-    def __getitem__(self, item):
+    def __getitemsnippet__(self, item):
         if item != 0:
             motion_id = np.searchsorted(self.cumsum, item) - 1
             idx = item - self.cumsum[motion_id] - 1
@@ -204,7 +210,8 @@ class PartMotionDatasetV2(MotionDatasetV2):
     def __getitem__(self, item):
         motion_data = super().__getitem__(item)   # (T, 263), already normalized
         motion = motion_data['motion']
-        assert motion.shape[0] == self.opt.window_size and motion.shape[1] == 263, f"Bad T at idx {item}: {motion.shape}"
+        #assert motion.shape[0] == self.opt.window_size and motion.shape[1] == 263, f"Bad T at idx {item}: {motion.shape}"
+        assert motion.shape[0] == self.opt.max_motion_length and motion.shape[1] == 263, f"Bad T at idx {item}: {motion.shape}"
 
         T, D = motion.shape
         P = len(self.part_names)
