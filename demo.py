@@ -117,6 +117,7 @@ class MotionPipeline:
 
 
         motion = self.decoder(z)
+        print('generated motion shape: ', z.shape, motion.shape)
         denormalized_motion = self.denormalize_motion(motion[0])
 
         motion_joints = recover_from_ric(denormalized_motion, self.joints_num)
@@ -130,7 +131,7 @@ def parse_args():
     parser.add_argument("--model_dir", type=str, default="checkpoints/model")
     parser.add_argument("--meta_dir", type=str, default="checkpoints/HumanML3D/test/meta")
     parser.add_argument("--gif_name", type=str, default="sample.gif")
-    parser.add_argument("--num_steps", type=int, default=50)
+    parser.add_argument("--num_steps", type=int, default=100)
     parser.add_argument('--window_size', type = int, default = 40)
     parser.add_argument("--guidance_scale", type=float, default=7.5)
     parser.add_argument("--seed", type=int, default=42)
@@ -225,7 +226,7 @@ def render_skeleton_animation(
     if saved_path is None and save_gif_fallback:
         try:
             gif_path = output_path_no_ext + ".gif"
-            writer = PillowWriter(fps=fps)
+            writer = PillowWriter(fps=num_frames)
             anim.save(gif_path, writer=writer)
             saved_path = gif_path
         except Exception as exec:
@@ -241,7 +242,7 @@ def run_inference(pipe, prompt, num_steps, seed, device, outputs_path):
 
     # Replace this call with your actual pipeline invocation
     #prompt = 'run'
-    gen = torch.Generator(device).manual_seed(42)
+    gen = torch.Generator(device).manual_seed(seed)
     result = pipe(
         prompt=prompt,
         generator = gen,
