@@ -4,6 +4,7 @@ from pathlib import Path
 from os.path import join as pjoin
 import torch
 from networks.nn import DiT
+from networks.transformer_modules import TextTokenEncoder
 from utils.pretrained_model_utils import get_pretrained_vae, get_pretrained_text_encoder
 import numpy as np
 import json
@@ -24,6 +25,7 @@ class MotionPipeline:
         beta_end=2e-2):
 
         self.dit = dit
+        self.dit.eval()
         self.text_embedder = text_embedder
         self.decoder = decoder
         self.device = device
@@ -46,24 +48,76 @@ class MotionPipeline:
         return motion * self.std + self.mean
     
     @torch.no_grad()
+    def __calltest__(self, prompt, generator, num_inference_steps=50, seed=42, latent_shape=(1, 512), eta = 0.0):
+        #generator = torch.Generator(device=self.device).manual_seed(seed)
+
+        z1 = torch.randn(latent_shape, generator=generator, device=self.device)
+        z2 = z1.clone()
+
+        #cond = self.text_embedder.encode(prompt, convert_to_tensor = True, device = str(self.device)).clone()
+        text_tokens, text_mask = self.text_embedder.encode_tokens(["a person walking slowly"])
+        text_tokens1, text_mask1 = self.text_embedder.encode_tokens(["a person twists from side to side"])
+        print(prompt, num_inference_steps)
+        print(text_tokens.mean().item(), text_tokens.std().item())
+        print(text_tokens1.mean().item(), text_tokens1.std().item())
+
+        for d_step in range(num_inference_steps):
+            t = torch.full((z1.shape[0], ), fill_value = d_step / (num_inference_steps - 1), device = self.device)
+            t = t.clamp(1e-4, 1.0)
+            d = torch.zeros(z1.shape[0], device=self.device)
+            alpha = 1.0 / num_inference_steps
+
+            v1 = self.dit(z1, t, d, text_tokens, text_mask)
+            z1 = z1 + alpha * v1
+
+            block = self.dit.blocks[-1]
+            cross_out_1 = block.last_cross_out # shape [B, L_motion, dim]
+
+            v2 = self.dit(z2, t, d, text_tokens1, text_mask1)
+            z2 = z2 + alpha * v2
+
+            block = self.dit.blocks[-1]
+            cross_out_2 = block.last_cross_out # shape [B, L_motion, dim]
+
+            diff = (cross_out_1 - cross_out_2).abs().mean().item()
+            print("Mean |cross_out(text1) - cross_out(text2)|:", diff)
+
+            pred_diff = (v1 - v2).abs().mean().item()
+            print("Mean |pred(text1) - pred(text2)|:", pred_diff)
+
+        motion1 = self.decoder(z1)
+        motion2 = self.decoder(z2)
+        denormalized_motion1 = self.denormalize_motion(motion1[0])
+        denormalized_motion2 = self.denormalize_motion(motion2[0])
+
+        motion_joints1 = recover_from_ric(denormalized_motion1, self.joints_num)
+        motion_joints2 = recover_from_ric(denormalized_motion2, self.joints_num)
+
+        return motion_joints1, motion_joints2
+    
+    @torch.no_grad()
     def __call__(self, prompt, generator, num_inference_steps=50, seed=42, latent_shape=(1, 512), eta = 0.0):
         #generator = torch.Generator(device=self.device).manual_seed(seed)
 
         z = torch.randn(latent_shape, generator=generator, device=self.device)
 
-        cond = self.text_embedder.encode(prompt, convert_to_tensor = True, device = str(self.device)).clone()
-        print(prompt, cond.shape, cond.norm().item(), num_inference_steps)
-        t_values = torch.linspace(1.0, 0.0, steps=num_inference_steps, device=self.device)
+        #cond = self.text_embedder.encode(prompt, convert_to_tensor = True, device = str(self.device)).clone()
+        text_tokens, text_mask = self.text_embedder.encode_tokens([prompt])
+        #print(prompt, num_inference_steps)
+        #print(text_tokens.mean().item(), text_tokens.std().item())
 
         for d_step in range(num_inference_steps):
             t = torch.full((z.shape[0], ), fill_value = d_step / (num_inference_steps - 1), device = self.device)
             t = t.clamp(1e-4, 1.0)
             d = torch.zeros(z.shape[0], device=self.device)
-            v = self.dit(z, t, d, cond)
             alpha = 1.0 / num_inference_steps
+
+            v = self.dit(z, t, d, text_tokens, text_mask)
             z = z + alpha * v
 
+
         motion = self.decoder(z)
+        print('generated motion shape: ', z.shape, motion.shape)
         denormalized_motion = self.denormalize_motion(motion[0])
 
         motion_joints = recover_from_ric(denormalized_motion, self.joints_num)
@@ -74,10 +128,11 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--prompt", type=str, help="A prompt for the generation pipeline", default = 'A person waving their arms')
     parser.add_argument("--output_dir", type=str, default="outputs/diffusion_inference")
-    parser.add_argument("--checkpoints_dir", type=str, default="checkpoints")
+    parser.add_argument("--model_dir", type=str, default="checkpoints/model")
     parser.add_argument("--meta_dir", type=str, default="checkpoints/HumanML3D/test/meta")
     parser.add_argument("--gif_name", type=str, default="sample.gif")
-    parser.add_argument("--num_steps", type=int, default=50)
+    parser.add_argument("--num_steps", type=int, default=100)
+    parser.add_argument('--window_size', type = int, default = 40)
     parser.add_argument("--guidance_scale", type=float, default=7.5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="cpu")
@@ -89,18 +144,21 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def load_models(device, checkpoints_dir, meta_dir):
+def load_models(device, model_dir, meta_dir, window_size = 40):
     
-    enc, dec = get_pretrained_vae(checkpoint_dir=checkpoints_dir)
+    enc, dec = get_pretrained_vae(model_dir=model_dir)
     enc.eval()
     dec.eval()
-    text_embedder = get_pretrained_text_encoder(device)
-    text_embedder.eval()
-    dit_chkpt = torch.load(pjoin(checkpoints_dir, 'model/dit_full_v0.tar'), map_location = device)
+    #text_embedder = get_pretrained_text_encoder(device)
+    #text_embedder.eval()
+    text_encoder = TextTokenEncoder(device = device).to(device)
+    text_encoder.eval()
+    dit_chkpt = torch.load(pjoin(model_dir, 'dit_crossattn_full.tar'), map_location = device)
     dit = DiT(
         input_size = 512,
         hidden_size=1152,
-        text_dim=384
+        text_dim=384,
+        max_seq_len=window_size//4
     )
     dit.load_state_dict(dit_chkpt['dit'])
     dit.to(device)
@@ -108,7 +166,7 @@ def load_models(device, checkpoints_dir, meta_dir):
 
     pipe = MotionPipeline(
         dit=dit,
-        text_embedder=text_embedder,
+        text_embedder=text_encoder,
         decoder=dec,
         device=device,
         meta_dir=meta_dir
@@ -168,7 +226,7 @@ def render_skeleton_animation(
     if saved_path is None and save_gif_fallback:
         try:
             gif_path = output_path_no_ext + ".gif"
-            writer = PillowWriter(fps=fps)
+            writer = PillowWriter(fps=num_frames)
             anim.save(gif_path, writer=writer)
             saved_path = gif_path
         except Exception as exec:
@@ -184,7 +242,7 @@ def run_inference(pipe, prompt, num_steps, seed, device, outputs_path):
 
     # Replace this call with your actual pipeline invocation
     #prompt = 'run'
-    gen = torch.Generator(device).manual_seed(0)
+    gen = torch.Generator(device).manual_seed(seed)
     result = pipe(
         prompt=prompt,
         generator = gen,
@@ -201,27 +259,7 @@ def run_inference(pipe, prompt, num_steps, seed, device, outputs_path):
         text = prompt,
         recon_caption='Diffusion inference'
     )
-
-    #prompt = 'walk'
-    #gen = torch.Generator(device).manual_seed(0)
-    #result = pipe(
-        #prompt=prompt,
-        #generator = gen,
-        #num_inference_steps=num_steps
-    #)
-
-    #motion_joints = result
-    #all_gif_files = [fname for fname in os.listdir(outputs_path) if ".gif" in fname]
-    #file_id = len(all_gif_files)
-    #render_skeleton_animation(
-        #joints_recon=motion_joints,
-        #output_path_no_ext=pjoin(outputs_path, f'inference_test_clip_{file_id}'),
-        #clip_id=f'inference_test_clip_{file_id}',
-        #text = prompt,
-        #recon_caption='Diffusion inference'
-    #)
-
-
+    
 def main():
     args = parse_args()
     set_seed(args.seed)
@@ -231,7 +269,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     save_path = output_dir / args.gif_name
 
-    pipe, _ = load_models(device, args.checkpoints_dir, args.meta_dir)
+    pipe, _ = load_models(device, args.model_dir, args.meta_dir, args.window_size)
     print('args prompt: ', args.prompt)
 
     run_inference(

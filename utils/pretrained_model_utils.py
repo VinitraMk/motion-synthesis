@@ -5,7 +5,7 @@ from os.path import join as pjoin
 from sentence_transformers import SentenceTransformer
 
 
-def get_pretrained_vae(checkpoint_dir):
+def get_pretrained_vae(model_dir):
     encoder = MovementConvEncoder(
         input_size = DIMPOSE - 4,
         hidden_size = 512,
@@ -17,7 +17,7 @@ def get_pretrained_vae(checkpoint_dir):
         output_size = DIMPOSE
     )
 
-    humanml3d_vae_chkpoint = torch.load(pjoin(checkpoint_dir, 'model/humanml3d_pretrained_vae.tar'), map_location = torch.device("cpu"))
+    humanml3d_vae_chkpoint = torch.load(pjoin(model_dir, 'humanml3d_pretrained_vae.tar'), map_location = torch.device("cpu"))
 
     encoder.load_state_dict(humanml3d_vae_chkpoint['movement_enc'])
     decoder.load_state_dict(humanml3d_vae_chkpoint['movement_dec'])

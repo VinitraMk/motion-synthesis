@@ -15,11 +15,11 @@ This codebase is heavily based on the implementation and data processing pipelin
 
 ## Phases
 
-### Phase 1 — Part-based VQ-VAE
-The first phase focuses on learning a structured latent representation using a part-based VQ-VAE. The goal here is to test whether factorizing motion by body parts leads to useful latent organization, meaningful reconstructions, and interpolation behavior that is suitable for later editing.
+### Phase 1 — Diffusion with masked latent editing
+The first phase builds a diffusion pipeline on top of the learned latent space (obtained from a pretrained VAE). The main idea is to corrupt or mask selected latent regions and regenerate them under conditioning, enabling localized motion edits while keeping the unmasked motion context intact.
 
-### Phase 2 — Diffusion with masked latent editing
-The second phase builds a diffusion pipeline on top of the learned latent space. The main idea is to corrupt or mask selected latent regions and regenerate them under conditioning, enabling localized motion edits while keeping the unmasked motion context intact.
+### Phase 2 — Part-based VQ-VAE
+The second phase focuses on learning a structured latent representation using a part-based VQ-VAE. The goal here is to test whether factorizing motion by body parts leads to useful latent organization, meaningful reconstructions, and interpolation behavior that is suitable for later editing.
 
 ## Current Repository Contents
 At the current stage, the repository contains two main representation-learning components:
@@ -31,6 +31,7 @@ These two branches provide the benchmark-vs-structured setup needed to study whe
 
 ## Outputs So Far
 
+<!--
 ### Decoded results from Part-aware VQVAE vs Pretrained VAE from HumanML3D
 
 **Validation Sample 1**
@@ -43,24 +44,29 @@ These two branches provide the benchmark-vs-structured setup needed to study whe
 <br/>
 <img src="assets/vqvae_results/val_M009751_31.gif" alt="Alt text">
 <br/>
+-->
 
 ### Basic Diffusion pipeline inference results
 <br/>
-<img src="assets/dit_results/inference_0.gif" alt="Alt text">
+<img src="assets/dit_results/inference_test_clip_68.gif" alt="Alt text">
+<br/>
+<br/>
+<img src="assets/dit_results/inference_test_clip_63.gif" alt="Alt text">
 <br/>
 
 
 ## Interpretation of Current Results
-
+<!--
 ### Part-aware VQVAE
 Current results show that the part-based VQ-VAE is already learning useful structure: validation reconstructions are meaningful, and interpolation samples suggest that the latent space captures non-trivial motion variation. At the same time, some outputs contain visible artifacts such as jitter or weak coordination across body regions, which suggests that the current representation is stronger at capturing local part behavior than full-body global context.
 
 The current interpretation is that these artifacts are not only an optimization issue, but also an architectural one. With a relatively simple part-based encoder-decoder, each part can be modeled reasonably well in isolation, but the model has limited capacity to enforce smooth temporal consistency and coherent cross-part motion over longer ranges.
 
 The planned improvement is to treat the current VQ-VAE as a useful first step rather than a final editing backbone. The next iteration should strengthen the part-based autoencoding pipeline with better multi-scale temporal context and stronger coordination across parts, while keeping the latent structure suitable for masking and controlled editing in the diffusion stage.
+-->
 
 ### Diffusion model
-The Diffusion model consists of a transformer backend or DiT. The model has been trained on a very small nano set as an initial sanity check to validate the model code. The samples generated exhibit typical behaviour from an overfit pipeline, showing strong results for train set samples (Figure 1). More iterations are in progress to finalize the hyperparameters and train the DiT on the full dataset. Followed by this, we will proceed with one-step or few-step diffusion study.
+The Diffusion model has been trained on datasets augmented by clipping the motions in a 60 frames window. This has created many short clips mapping to same text. The model as a result not learned text alignment very strongly. The solution is to either have a text-aligment module trained or skip the augmentation and train the model on the original clips as is. Currently experimenting with the latter method.
 
 ## Immediate Next Steps
 - Architectural improvement to be implemented to correct the jitters and other artifacts observed in the decoded samples.
