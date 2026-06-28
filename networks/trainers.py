@@ -531,7 +531,7 @@ class MotionDiTTrainer(object):
         #mse loss
         #print('pred shape', self.pred.shape, motion_masks_enc.shape)
         valid_pred = self.pred * motion_masks_enc
-        lambda_feat = 0.5
+        lambda_feat = 0.3
         self.mse_loss = F.mse_loss(valid_pred, self.target)
 
         #contrastive loss term
@@ -575,7 +575,7 @@ class MotionDiTTrainer(object):
             target_joints=target_motions_jts
         )
         #self.contact_loss = F.mse_loss(self.pred[..., 259:263], self.target[..., 259:263])
-        lambda_foot = 0.01 # lambda contact
+        lambda_foot = 0.05 # lambda contact
         lambda_pos = 0.05 # lambda foot position
         lambda_root = 0.1 # lambda root velocity
 
