@@ -485,6 +485,12 @@ class MotionDiTTrainer(object):
         self.dit.train()
         motions = batch_data['motion'].to(self.device).float()
         texts = batch_data['text']
+        motion_masks = batch_data['motion_mask'].to(self.device).float()
+        stride = 4
+        T_enc = motion_masks.shape[0] // stride
+        motion_masks_enc = motion_masks[:, ::stride].clone().float()
+        #motion_masks = motion_masks.unsqueeze(-1)
+        motion_masks_enc = motion_masks_enc.unsqueeze(-1)
 
         with torch.no_grad():
             self.latents = self.encoder(motions[:, :, :-4])
@@ -520,11 +526,16 @@ class MotionDiTTrainer(object):
         # Check output of DiT and loss
         if torch.isnan(self.pred).any():
             print("NaN in pred")
+
+
         #mse loss
-        self.mse_loss = F.mse_loss(self.pred, self.target)
+        #print('pred shape', self.pred.shape, motion_masks_enc.shape)
+        valid_pred = self.pred * motion_masks_enc
+        lambda_feat = 0.5
+        self.mse_loss = F.mse_loss(valid_pred, self.target)
 
         #contrastive loss term
-        pred_flat = self.pred.flatten(start_dim = 1).float()
+        pred_flat = valid_pred.flatten(start_dim = 1).float()
         pred_flat = F.normalize(pred_flat, dim = 1)
         sim = pred_flat @ pred_flat.t()
 
@@ -547,12 +558,12 @@ class MotionDiTTrainer(object):
             self.contrastive_loss = F.relu(diff).mean()
         else:
             self.contrastive_loss = sim.new_zeros(())
-        lambda_contrast = 0.05
+        lambda_contrast = 0.05 # lambda contrastive text loss
 
         # foot contact component
 
         target_motions = self.decoder(self.target)
-        pred_motions = self.decoder(self.pred)
+        pred_motions = self.decoder(valid_pred)
         target_motions = self.denormalize_motion(target_motions.detach().cpu())
         pred_motions = self.denormalize_motion(pred_motions.detach().cpu())
         target_motions_jts = recover_from_ric(target_motions.float(), self.joints_num)
@@ -564,13 +575,13 @@ class MotionDiTTrainer(object):
             target_joints=target_motions_jts
         )
         #self.contact_loss = F.mse_loss(self.pred[..., 259:263], self.target[..., 259:263])
-        lambda_foot = 0.01
-        lambda_pos = 0.005
-        lambda_root = 0.005
+        lambda_foot = 0.01 # lambda contact
+        lambda_pos = 0.05 # lambda foot position
+        lambda_root = 0.1 # lambda root velocity
 
 
         # total loss computation
-        self.loss = self.mse_loss + (lambda_contrast * self.contrastive_loss) + (lambda_foot * self.contact_loss) + (lambda_pos * self.foot_pos_loss) + (lambda_root * self.root_vel_loss)
+        self.loss = (lambda_feat * self.mse_loss) + (lambda_contrast * self.contrastive_loss) + (lambda_foot * self.contact_loss) + (lambda_pos * self.foot_pos_loss) + (lambda_root * self.root_vel_loss)
 
 
     def update(self):

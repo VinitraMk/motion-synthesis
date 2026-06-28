@@ -13,6 +13,7 @@ class MotionDatasetV2(data.Dataset):
         joints_num = opt.joints_num
 
         self.data = []
+        self.data_masks = []
         self.lengths = []
         id_list = []
         self.loaded_ids = []
@@ -20,16 +21,25 @@ class MotionDatasetV2(data.Dataset):
             for line in f.readlines():
                 id_list.append(line.strip())
         print('id list', len(id_list))
+        small_motions = 0
         for name in tqdm(id_list):
             try:
                 motion = np.load(pjoin(opt.motion_dir, name + '.npy'))
                 if motion.shape[0] < opt.max_motion_length:
-                    pad_amt = opt.max_motion_length - motion.shape[0]
+                    #print('motion shape: ', motion.shape[0], opt.max_motion_length)
+                    orig_len = motion.shape[0]
+                    pad_amt = opt.max_motion_length - orig_len
                     motion = np.pad(motion, ((0, pad_amt), (0, 0)), mode = 'constant', constant_values = 0)
-                #self.lengths.append(motion.shape[0] - opt.max_seq_)
+                    small_motions += 1
+                    mask = np.zeros(opt.max_motion_length).astype(float)
+                    mask[:orig_len] = 1.0
                 else:
+                    orig_len = motion.shape[0]
                     motion = motion[:opt.max_motion_length, :]
+                    mask = np.zeros(opt.max_motion_length).astype(float)
+                    mask[:orig_len] = 1.0
                 self.data.append(motion)
+                self.data_masks.append(mask)
                 self.loaded_ids.append(name)
             except Exception as e:
                 print('Dataset load exception: ', e)
@@ -67,6 +77,7 @@ class MotionDatasetV2(data.Dataset):
         print(f'Motion shape (B, T, D): ({len(self.data)}, {self.data[0].shape[0]}, {self.data[0].shape[1]})')
         #print("Total number of motions {}, snippets {}".format(len(self.data), self.cumsum[-1]))
         print("Total number of motions {}".format(len(self.data)))
+        print("Total number of small motions: {}".format(small_motions))
 
     def _load_texts(self, name):
         text_path = pjoin(self.opt.text_dir, name + '.txt')
@@ -101,9 +112,11 @@ class MotionDatasetV2(data.Dataset):
         motion_file_id = self.loaded_ids[motion_id]
         texts = self._load_texts(motion_file_id)
         text = texts[0] if len(texts) > 0 else ""
+        motion_mask = self.data_masks[motion_id]
 
         return {
             'motion': motion,
+            'motion_mask': motion_mask,
             'file_id': motion_file_id,
             'text': text,
             'texts': texts
@@ -228,5 +241,6 @@ class PartMotionDatasetV2(MotionDatasetV2):
             "motion_parts": motion_parts.astype(np.float32),  # (T, P, D_part_max)
             #"texts": motion_data['texts'],
             'file_id': motion_data['file_id'],
-            'text': motion_data['text']
+            'text': motion_data['text'],
+            'motion_mask': motion_data['motion_mask']
         }
