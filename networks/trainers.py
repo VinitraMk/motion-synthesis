@@ -780,6 +780,7 @@ class MotionDiTTrainer(object):
             val_mse_loss_avg /= denom
             val_feet_poss_loss_avg /= denom
             val_root_vel_loss_avg /= denom
+            val_contact_loss_avg /= denom
             history["val_loss"].append(val_loss)
             history["val_contrastive_loss"].append(val_contrastive_loss_avg)
             history["val_mse_loss"].append(val_mse_loss_avg)
