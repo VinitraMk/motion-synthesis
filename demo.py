@@ -21,6 +21,7 @@ except Exception:
 class MotionPipeline:
     def __init__(self, dit, text_embedder, decoder, device, meta_dir,
         num_train_timesteps=1000,
+        num_inference_steps = 700,
         beta_start=1e-4,
         beta_end=2e-2, prediction_type = "epsilon"):
 
@@ -30,6 +31,7 @@ class MotionPipeline:
         self.decoder = decoder
         self.device = device
         self.num_train_timesteps = num_train_timesteps
+        self.num_inference_steps = num_inference_steps
         self.beta_start = beta_start
         self.beta_end = beta_end
         self.prediction_type = prediction_type
@@ -122,8 +124,11 @@ class MotionPipeline:
             text_mask = text_mask.to(self.device)
 
         x = torch.randn(batch_size, seq_len, latent_dim, device=self.device)
+        full_t = self.num_train_timesteps
+        timesteps = np.linspace(0, full_t - 1, self.num_inference_steps)
+        timesteps = list(np.round(timesteps).astype(int))
 
-        for t in reversed(range(self.num_train_timesteps)):
+        for t in reversed(timesteps):
             x = self._p_sample(x, t, text_tokens, text_mask)
 
         return x
@@ -249,7 +254,7 @@ def load_models(device, model_dir, meta_dir, max_motion_length = 40):
     #text_embedder.eval()
     text_encoder = TextTokenEncoder(device = device).to(device)
     text_encoder.eval()
-    dit_chkpt = torch.load(pjoin(model_dir, 'dit_stable_crossattn_debug.tar'), map_location = device)
+    dit_chkpt = torch.load(pjoin(model_dir, 'dit_stable_crossattn_full.tar'), map_location = device)
     dit = DiT(
         input_size = 512,
         hidden_size=1152,
