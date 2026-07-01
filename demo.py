@@ -203,6 +203,7 @@ class MotionPipeline:
 
 
         motion = self.decoder(z)
+        print('generated motion shape: ', z.shape, motion.shape)
         denormalized_motion = self.denormalize_motion(motion[0])
 
         motion_joints = recover_from_ric(denormalized_motion, self.joints_num)
@@ -327,7 +328,7 @@ def render_skeleton_animation(
     if saved_path is None and save_gif_fallback:
         try:
             gif_path = output_path_no_ext + ".gif"
-            writer = PillowWriter(fps=fps)
+            writer = PillowWriter(fps=num_frames)
             anim.save(gif_path, writer=writer)
             saved_path = gif_path
         except Exception as exec:
