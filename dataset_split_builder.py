@@ -5,12 +5,12 @@ def make_debug_splits(
     train_split_path,
     val_split_path,
     out_dir,
-    train_debug_n=64,
-    val_debug_n=32,
-    micro_train_n=8,
-    micro_val_n=4,
-    nano_train_n=6,
-    nano_val_n=3,
+    train_debug_n=2560,
+    val_debug_n=640,
+    micro_train_n=128,
+    micro_val_n=64,
+    nano_train_n=32,
+    nano_val_n=16,
     seed=1234,
 ):
     rng = random.Random(seed)
