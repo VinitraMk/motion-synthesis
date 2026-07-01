@@ -21,8 +21,9 @@ except Exception:
 class MotionPipeline:
     def __init__(self, dit, text_embedder, decoder, device, meta_dir,
         num_train_timesteps=1000,
+        num_inference_steps = 700,
         beta_start=1e-4,
-        beta_end=2e-2):
+        beta_end=2e-2, prediction_type = "epsilon"):
 
         self.dit = dit
         self.dit.eval()
@@ -30,8 +31,10 @@ class MotionPipeline:
         self.decoder = decoder
         self.device = device
         self.num_train_timesteps = num_train_timesteps
+        self.num_inference_steps = num_inference_steps
         self.beta_start = beta_start
         self.beta_end = beta_end
+        self.prediction_type = prediction_type
 
         self.mean = np.load(pjoin(meta_dir, 'mean.npy'))
         self.std = np.load(pjoin(meta_dir, 'std.npy'))
@@ -42,10 +45,93 @@ class MotionPipeline:
         self.part_names = mapping['part_names']
         self.d_part_max = mapping['d_part_max']
         self.joints_num = mapping['joints_num']
+        self.build_schedule(self.beta_start, self.beta_end, self.num_train_timesteps)
 
 
     def denormalize_motion(self, motion):
         return motion * self.std + self.mean
+    
+
+    def build_schedule(self, beta_start, beta_end, num_train_timesteps):
+        betas = torch.linspace(beta_start, beta_end, num_train_timesteps, dtype=torch.float32, device=self.device)
+        alphas = 1.0 - betas
+        alphas_cumprod = torch.cumprod(alphas, dim=0)
+        alphas_cumprod_prev = torch.cat(
+            [torch.tensor([1.0], dtype=torch.float32, device=self.device), alphas_cumprod[:-1]],
+            dim=0
+        )
+
+        self.betas = betas
+        self.alphas = alphas
+        self.alphas_cumprod = alphas_cumprod
+        self.alphas_cumprod_prev = alphas_cumprod_prev
+
+        self.sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod)
+        self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - alphas_cumprod)
+        self.sqrt_recip_alphas = torch.sqrt(1.0 / alphas)
+
+        self.posterior_variance = (
+            betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+        )
+
+    def _extract(self, a, t, x_shape):
+        out = a.gather(0, t)
+        return out.view(t.shape[0], *((1,) * (len(x_shape) - 1)))
+
+    @torch.no_grad()
+    def _p_sample(self, x, t, text_tokens, text_mask=None):
+        B = x.shape[0]
+        t_batch = torch.full((B,), t, device=self.device, dtype=torch.long)
+        d = torch.zeros_like(t_batch)
+
+        model_pred = self.dit(x, t_batch, d, text_tokens, text_mask)
+
+        if self.prediction_type == "epsilon":
+            betas_t = self._extract(self.betas, t_batch, x.shape)
+            sqrt_one_minus_alphas_cumprod_t = self._extract(
+                self.sqrt_one_minus_alphas_cumprod, t_batch, x.shape
+            )
+            sqrt_recip_alphas_t = self._extract(self.sqrt_recip_alphas, t_batch, x.shape)
+
+            model_mean = sqrt_recip_alphas_t * (
+                x - betas_t * model_pred / sqrt_one_minus_alphas_cumprod_t
+            )
+        elif self.prediction_type == "x0":
+            betas_t = self._extract(self.betas, t_batch, x.shape)
+            alphas_t = self._extract(self.alphas, t_batch, x.shape)
+            alphas_cumprod_t = self._extract(self.alphas_cumprod, t_batch, x.shape)
+            alphas_cumprod_prev_t = self._extract(self.alphas_cumprod_prev, t_batch, x.shape)
+
+            coef1 = betas_t * torch.sqrt(alphas_cumprod_prev_t) / (1.0 - alphas_cumprod_t)
+            coef2 = (1.0 - alphas_cumprod_prev_t) * torch.sqrt(alphas_t) / (1.0 - alphas_cumprod_t)
+            model_mean = coef1 * model_pred + coef2 * x
+        else:
+            raise ValueError(f"Unsupported prediction_type: {self.prediction_type}")
+
+        if t == 0:
+            return model_mean
+        else:
+            posterior_variance_t = self._extract(self.posterior_variance, t_batch, x.shape)
+            noise = torch.randn_like(x)
+            return model_mean + torch.sqrt(posterior_variance_t) * noise
+
+    @torch.no_grad()
+    def _sample(self, text_tokens, seq_len, latent_dim, text_mask=None, batch_size=1):
+        self.dit.eval()
+
+        text_tokens = text_tokens.to(self.device)
+        if text_mask is not None:
+            text_mask = text_mask.to(self.device)
+
+        x = torch.randn(batch_size, seq_len, latent_dim, device=self.device)
+        full_t = self.num_train_timesteps
+        timesteps = np.linspace(0, full_t - 1, self.num_inference_steps)
+        timesteps = list(np.round(timesteps).astype(int))
+
+        for t in reversed(timesteps):
+            x = self._p_sample(x, t, text_tokens, text_mask)
+
+        return x
     
     @torch.no_grad()
     def __calltest__(self, prompt, generator, num_inference_steps=50, seed=42, latent_shape=(1, 512), eta = 0.0):
@@ -96,7 +182,7 @@ class MotionPipeline:
         return motion_joints1, motion_joints2
     
     @torch.no_grad()
-    def __call__(self, prompt, generator, num_inference_steps=50, seed=42, latent_shape=(1, 512), eta = 0.0):
+    def __callshorcut__(self, prompt, generator, num_inference_steps=50, seed=42, latent_shape=(1, 512), eta = 0.0):
         #generator = torch.Generator(device=self.device).manual_seed(seed)
 
         z = torch.randn(latent_shape, generator=generator, device=self.device)
@@ -123,6 +209,22 @@ class MotionPipeline:
         motion_joints = recover_from_ric(denormalized_motion, self.joints_num)
 
         return motion_joints
+    
+    @torch.no_grad()
+    def __call__(self, prompt, max_motion_len, latent_dim = 512, batch_size = 1):
+        text_tokens, text_mask = self.text_embedder.encode_tokens([prompt])
+        latent = self._sample(
+            text_tokens = text_tokens,
+            seq_len=max_motion_len//4,
+            latent_dim = latent_dim,
+            text_mask = text_mask,
+            batch_size = batch_size
+        )
+        print('latent stats: ', latent.mean(), latent.std(), latent.abs().max())
+        motion = self.decoder(latent)
+        denormalized_motion = self.denormalize_motion(motion[0])
+        motion_joints = recover_from_ric(denormalized_motion, self.joints_num)
+        return motion_joints
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -131,8 +233,8 @@ def parse_args():
     parser.add_argument("--model_dir", type=str, default="checkpoints/model")
     parser.add_argument("--meta_dir", type=str, default="checkpoints/HumanML3D/test/meta")
     parser.add_argument("--gif_name", type=str, default="sample.gif")
-    parser.add_argument("--num_steps", type=int, default=100)
-    parser.add_argument('--window_size', type = int, default = 40)
+    parser.add_argument("--num_steps", type=int, default=50)
+    parser.add_argument('--max_motion_length', type = int, default = 120)
     parser.add_argument("--guidance_scale", type=float, default=7.5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="cpu")
@@ -144,7 +246,7 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def load_models(device, model_dir, meta_dir, window_size = 40):
+def load_models(device, model_dir, meta_dir, max_motion_length = 40):
     
     enc, dec = get_pretrained_vae(model_dir=model_dir)
     enc.eval()
@@ -153,12 +255,12 @@ def load_models(device, model_dir, meta_dir, window_size = 40):
     #text_embedder.eval()
     text_encoder = TextTokenEncoder(device = device).to(device)
     text_encoder.eval()
-    dit_chkpt = torch.load(pjoin(model_dir, 'dit_crossattn_full.tar'), map_location = device)
+    dit_chkpt = torch.load(pjoin(model_dir, 'dit_stable_crossattn_full.tar'), map_location = device)
     dit = DiT(
         input_size = 512,
         hidden_size=1152,
         text_dim=384,
-        max_seq_len=window_size//4
+        max_seq_len=max_motion_length//4
     )
     dit.load_state_dict(dit_chkpt['dit'])
     dit.to(device)
@@ -238,15 +340,14 @@ def render_skeleton_animation(
 
 
 @torch.no_grad()
-def run_inference(pipe, prompt, num_steps, seed, device, outputs_path):
+def run_inference(pipe, prompt, num_steps, max_motion_len, seed, device, outputs_path):
 
     # Replace this call with your actual pipeline invocation
     #prompt = 'run'
     gen = torch.Generator(device).manual_seed(seed)
     result = pipe(
         prompt=prompt,
-        generator = gen,
-        num_inference_steps=num_steps
+        max_motion_len = max_motion_len
     )
 
     motion_joints = result
@@ -269,13 +370,14 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     save_path = output_dir / args.gif_name
 
-    pipe, _ = load_models(device, args.model_dir, args.meta_dir, args.window_size)
+    pipe, _ = load_models(device, args.model_dir, args.meta_dir, args.max_motion_length)
     print('args prompt: ', args.prompt)
 
     run_inference(
         pipe=pipe,
         prompt=args.prompt,
         num_steps=args.num_steps,
+        max_motion_len = args.max_motion_length,
         seed=args.seed,
         device=device,
         outputs_path=args.output_dir
