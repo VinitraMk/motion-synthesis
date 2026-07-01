@@ -1126,7 +1126,7 @@ class MotionDiTTrainer(object):
         # mse_loss
         self.mse_loss = F.mse_loss(masked_pred, masked_target)
 
-        self.loss = self.mse_loss + (lambda_pad * self.pad_loss) + (lambda_contact * self.contact_loss) + (lambda_pos * self.pos_loss) + (lambda_vel * self.root_vel_loss)
+        self.loss = self.mse_loss + (lambda_pad * self.pad_loss) + (lambda_contact * self.contact_loss) + (lambda_pos * self.pos_loss) #+ (lambda_vel * self.root_vel_loss)
 
 
     def update(self):
