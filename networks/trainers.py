@@ -330,7 +330,7 @@ class MotionVQVAETrainer(object):
         self.save_loss_data(history = history)
 
 
-class MotionDiTTrainer(object):
+class MotionShortcutDiTTrainer(object):
     def __init__(self,
             args,
             dit: DiT,
@@ -846,3 +846,472 @@ class MotionDiTTrainer(object):
         
         self.save_loss_data(history = history)
 
+
+
+class MotionDiTTrainer(object):
+    def __init__(self,
+            args,
+            dit: DiT,
+            autoencoder_type: str,
+            num_train_timesteps = 1000,
+            beta_start = 1e-4,
+            beta_end = 2e-2,
+            prediction_type = "epsilon",
+            grad_clip = None
+        ):
+        self.opt = args
+        self.dit = dit 
+        self.device = args.device
+        self.num_train_timesteps = num_train_timesteps
+        self.prediction_type = prediction_type
+        self.grad_clip = grad_clip
+
+        if args.is_train:
+            self.logger = Logger(args.log_dir)
+
+        self.dit = dit.to(self.device)
+
+        weight_decay = 1e-3
+        param_groups = self._get_param_groups(model = self.dit, weight_decay=weight_decay)
+
+        self.opt_dit = torch.optim.AdamW(
+            param_groups,
+            lr=args.lr,
+            betas=(0.9, 0.999),
+            weight_decay=1e-3
+        )
+
+        self.vae = None
+        #self.text_encoder = get_pretrained_text_encoder(self.device)
+        self.text_encoder = TextTokenEncoder(device = self.device).to(self.device)
+        self.text_encoder.eval()
+
+        self.mean = np.load(pjoin(self.opt.meta_dir, 'mean.npy'))
+        self.std = np.load(pjoin(self.opt.meta_dir, 'std.npy'))
+
+        with open(pjoin(self.opt.meta_dir, 'part_mapping.json'), 'r') as f:
+            mapping = json.load(f)
+
+        self.joints_num = mapping['joints_num']
+
+        self._init_vae(autoencoder_type)
+
+        betas = torch.linspace(beta_start, beta_end, num_train_timesteps, dtype = torch.float32)
+        alphas = 1.0 - betas
+        alphas_cumprod = torch.cumprod(alphas, dim = 0)
+        alphas_cumprod_prev = torch.cat(
+            [torch.tensor([1.0], dtype = torch.float32), alphas_cumprod[:-1]], dim = 0
+        )
+        self.betas = betas.to(self.device)
+        self.alphas = alphas.to(self.device)
+        self.alphas_cumprod = alphas_cumprod.to(self.device)
+        self.alphas_cumprod_prev = alphas_cumprod_prev.to(self.device)
+        self.sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod).to(self.device)
+        self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - alphas_cumprod).to(self.device)
+        self.sqrt_recip_alphas = torch.sqrt(1.0 / alphas).to(self.device)
+        self.posterior_variance = (
+            betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+        ).to(self.device)
+
+    def _get_param_groups(self, model: DiT, weight_decay: float = 1e-4):
+        decay_params = []
+        no_decay_params = []
+
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            # 1D params are usually biases or norm weights -> no weight decay
+            if param.ndim == 1 or name.endswith(".bias"):
+                no_decay_params.append(param)
+            else:
+                decay_params.append(param)
+
+        return [
+            {"params": decay_params, "weight_decay": weight_decay},
+            {"params": no_decay_params, "weight_decay": 0.0},
+        ]
+
+    def _init_vae(self, autoencoder_type: str):
+        if autoencoder_type == "pretrained_vae":
+            self.encoder, self.decoder = get_pretrained_vae(self.opt.model_dir)
+            self.encoder.to(self.device)
+            self.decoder.to(self.device)
+        else:
+            raise ValueError(f"Unknown vae_name: {autoencoder_type}")
+        
+    def _compute_foot_contact_loss(self, predicted_joints, target_joints, foot_ids = [7, 8], height_thresh = 0.08, vel_thresh = 0.01):
+
+        B, T, J, _ = predicted_joints.shape
+
+        feet_pred = predicted_joints[:, :, foot_ids, :]
+        feet_target = target_joints[:, :, foot_ids, :]
+
+        target_vel = feet_target[:, 1:] - feet_target[:, :-1]
+        pred_vel = feet_pred[:, 1:] - feet_pred[:, :-1]
+        root_vel_loss = F.mse_loss(pred_vel, target_vel)
+
+        #target_speed_xy = torch.norm(target_vel[..., [0, 2]], dim = -1)
+        target_height = feet_target[..., 1]
+        contact = (target_height < height_thresh).float()
+
+        pred_speed_xy = torch.norm(pred_vel[..., [0, 2]], dim = -1)
+
+        foot_pos_error = torch.norm(feet_pred - feet_target, dim = -1)
+        num = contact.sum()
+        if num < 1:
+            return predicted_joints.new_zeros(()), predicted_joints.new_zeros(()), root_vel_loss
+
+        contact_loss = (contact[:, :-1, :] * (pred_speed_xy ** 2)).sum() / num
+        foot_pos_loss = (contact * foot_pos_error).sum() / num
+
+        return contact_loss, foot_pos_loss, root_vel_loss
+    
+    def _extract(self, a, t, x_shape):
+        out = a.gather(0, t)
+        return out.view(t.shape[0], *((1,) * (len(x_shape) - 1)))
+
+    def _q_sample(self, x_start, t, noise=None):
+        if noise is None:
+            noise = torch.randn_like(x_start)
+
+        sqrt_alphas_cumprod_t = self._extract(self.sqrt_alphas_cumprod, t, x_start.shape)
+        sqrt_one_minus_alphas_cumprod_t = self._extract(
+            self.sqrt_one_minus_alphas_cumprod, t, x_start.shape
+        )
+
+        return sqrt_alphas_cumprod_t * x_start + sqrt_one_minus_alphas_cumprod_t * noise
+
+    @staticmethod
+    def zero_grad(opt_list):
+        for opt in opt_list:
+            opt.zero_grad()
+
+    @staticmethod
+    def clip_norm(network_list, max_norm=0.5):
+        for network in network_list:
+            clip_grad_norm_(network.parameters(), max_norm)
+
+    @staticmethod
+    def step(opt_list):
+        for opt in opt_list:
+            opt.step()
+
+    def denormalize_motion(self, motion):
+        return motion * self.std + self.mean
+
+    def save_loss_data(self, history):
+
+        os.makedirs(self.opt.experiment_dir, exist_ok=True)
+        epochs = range(1, len(history["train_loss"]) + 1)
+
+        loss_pairs = [
+            ("loss", "Total Loss"),
+            ("mse_loss", "MSE Loss"),
+            ("pad_loss", "Padding Loss")
+        ]
+
+        for key, title in loss_pairs:
+            plt.figure(figsize=(8, 5))
+            plt.plot(epochs, history[f"train_{key}"], label=f"train_{key}")
+            plt.plot(epochs, history[f"val_{key}"], label=f"val_{key}")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.title(title)
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(pjoin(self.opt.experiment_dir, f"{key}.png"))
+            plt.close()
+
+        plt.figure(figsize=(10, 6))
+        for key, title in loss_pairs:
+            plt.plot(epochs, history[f"train_{key}"], label=f"train_{key}")
+            plt.plot(epochs, history[f"val_{key}"], linestyle="--", label=f"val_{key}")
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.title("All Losses")
+        plt.legend(fontsize=8, ncol=2)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(pjoin(self.opt.experiment_dir, "all_losses.png"))
+        plt.close()
+
+    def forward(self, batch_data):
+        self.dit.train()
+        motions = batch_data['motion'].to(self.device).float()
+        texts = batch_data['text']
+        motion_masks = batch_data['motion_mask'].to(self.device).float()
+        stride = 4
+        T_enc = motion_masks.shape[0] // stride
+        motion_masks_enc = motion_masks[:, ::stride].clone().float()
+        #motion_masks = motion_masks.unsqueeze(-1)
+        motion_masks_enc = motion_masks_enc.unsqueeze(-1)
+
+        with torch.no_grad():
+            self.latents = self.encoder(motions[:, :, :-4])
+            #text_emb = self.text_encoder.encode(
+                #texts,
+                #convert_to_tensor = True,
+                #device = str(self.device)
+            #).float()
+            self.text_tokens, self.text_mask = self.text_encoder.encode_tokens(texts)
+
+        B = self.latents.shape[0]
+        t = torch.randint(
+            0, self.num_train_timesteps, (B, ), device = self.device, dtype = torch.long
+        )
+        d = torch.zeros_like(t)
+        noise = torch.randn_like(self.latents)
+        x_t = self._q_sample(x_start = self.latents, t = t, noise = noise)
+
+        if self.prediction_type == "epsilon":
+            self.target = noise
+        elif self.prediction_type == "x0":
+            self.target = self.latents
+
+        # Check inputs to DiT
+        if torch.isnan(x_t).any():
+            print("NaN in xt")
+        if torch.isnan(self.text_tokens).any():
+            print("NaN in text_tokens")
+        if torch.isnan(self.target).any():
+            print("NaN in target")
+
+        self.pred = self.dit(
+            x_t,
+            t,
+            d,
+            self.text_tokens,
+            text_mask = self.text_mask
+        )
+        # Check output of DiT and loss
+        if torch.isnan(self.pred).any():
+            print("NaN in pred")
+        
+        masked_pred = self.pred * motion_masks_enc
+        masked_target = self.target * motion_masks_enc
+
+        pad_mask = 1.0 - motion_masks_enc
+        pad_pred = self.pred * pad_mask
+        self.pad_loss = (pad_pred ** 2).mean()
+        lambda_pad = 0.1
+
+        # mse_loss
+        self.mse_loss = F.mse_loss(masked_pred, masked_target)
+
+        self.loss = self.mse_loss + (lambda_pad * self.pad_loss)
+
+
+    def update(self):
+        if torch.isnan(self.loss):
+            print("NaN loss before backward, skipping step")
+            return OrderedDict()
+        self.zero_grad([self.opt_dit])
+        self.loss.backward()
+        self.clip_norm([self.dit], 0.5)
+        self.step([self.opt_dit])
+        self.scheduler_dit.step()
+
+        #loss_logs = OrderedDict()
+        #loss_logs["loss"] = self.loss.detach().item()
+        #loss_logs['mse_loss'] = self.mse_loss.detach().item()
+        #loss_logs['contrastive_loss'] = self.contrastive_loss.detach().item()
+        #return loss_logs
+
+    def save(self, file_name, ep, train_batch_index, total_it, history = None, best_model_state = None):
+        state = {
+            "dit": best_model_state if best_model_state != None else cpu_deepcopy_state(self.dit.state_dict()),
+            "opt_dit": cpu_deepcopy_state(self.opt_dit.state_dict()),
+            "scheduler_dit": cpu_deepcopy_state(self.scheduler_dit.state_dict()),
+            "ep": ep,
+            "total_it": total_it,
+            "train_batch_index": train_batch_index,
+            "history": history
+        }
+        torch.save(state, file_name)
+
+    def resume(self, model_dir):
+        checkpoint = torch.load(model_dir, map_location=self.device)
+        self.dit.load_state_dict(checkpoint["dit"])
+        move_state_to_device(self.dit, self.device)
+        self.opt_dit.load_state_dict(checkpoint["opt_dit"])
+        move_state_to_device(self.opt_dit, self.device)
+        self.scheduler_dit.load_state_dict(checkpoint["scheduler_dit"])
+        move_state_to_device(self.scheduler_dit, self.device)
+        return checkpoint["ep"], checkpoint["train_batch_index"], checkpoint["total_it"], checkpoint["history"]
+
+    def train(self, train_dataloader, val_dataloader, plot_eval = None):
+        self.dit.to(self.device)
+        total_iters = self.opt.max_epoch * len(train_dataloader)
+
+        self.scheduler_dit = CosineAnnealingLR(self.opt_dit, T_max = total_iters, eta_min = 1e-5)
+
+        history = {
+            "train_loss": [],
+            "train_mse_loss": [],
+            "train_pad_loss": [],
+            "val_loss": [],
+            "val_mse_loss": [],
+            "val_pad_loss": [],
+        }
+        
+        print("Number of epochs:", self.opt.max_epoch)
+        print("Number of steps:", total_iters)
+
+        epoch = 0
+        it = 0
+        train_batch_index = -1
+        B = len(train_dataloader)
+        if self.opt.is_continue:
+            model_dir = pjoin(self.opt.model_dir, "tmp.tar")
+            try:
+                epoch, train_batch_index, it, history = self.resume(model_dir)
+                #print(f'Resuming training from previous checkpoint at epoch {epoch} from batch {train_batch_index} and iteration {it}')
+            except Exception as e:
+                print(f"Failed to load checkpoint from {model_dir}, trying last stable checkpoint. Error: {e}")
+                model_dir = pjoin(self.opt.model_dir, "latest.tar")
+                try:
+                    epoch, train_batch_index, it, history = self.resume(model_dir)
+                    #print(f'Resuming training from previous stable checkpoint at epoch {epoch} from batch {train_batch_index} and iteration {it}')
+                except Exception as e:
+                    print(f"Failed to load checkpoint from {model_dir}. Starting training from scratch. Error: {e}")
+
+            if train_batch_index == B-1:
+                # this is to handle resuming from a checkpoint that ended at max_epochs in a previous run and user decided to extend it.
+                epoch += 1
+                train_batch_index = -1
+            print(f'Resuming training from previous checkpoint at epoch {epoch} from batch {train_batch_index} and iteration {it}')
+
+        print("Iters Per Epoch, Training: %04d, Validation: %03d\n" %
+              (len(train_dataloader), len(val_dataloader)))
+
+        val_loss = 0
+        logs = OrderedDict()
+
+        # loss value init
+        train_loss = 0
+        val_loss = 0
+        val_mse_loss_avg = 0
+        val_pad_loss_avg = 0
+        best_val = float("inf")
+        best_state = None
+        patience = 10
+        epochs_without_improve = 0
+        min_delta = 1e-3
+
+        while epoch < self.opt.max_epoch:
+            
+            train_loss = 0.0
+            train_mse_loss_sum = 0.0
+            train_pad_loss_sum = 0.0
+            train_steps = 0
+            for i, batch_data in enumerate(train_dataloader):
+                '''
+                if train_batch_index != -1 and i <= train_batch_index:
+                    continue
+                '''
+                self.dit.train()
+                self.forward(batch_data)
+                self.update()
+
+                train_loss += self.loss.detach().cpu().item()
+                train_mse_loss_sum += self.mse_loss.detach().cpu().item()
+                train_pad_loss_sum += self.pad_loss.detach().cpu().item()
+
+                train_steps += 1
+
+                it += 1
+
+                if it % self.opt.save_latest == 0:
+                    self.save(pjoin(self.opt.model_dir, "tmp.tar"), ep = epoch, train_batch_index = i, total_it = it, history = history)
+
+            #epoch += 1
+
+            train_loss = train_loss / max(train_steps, 1)
+            train_mse_loss_sum = train_mse_loss_sum / max(train_steps, 1)
+            train_pad_loss_sum = train_pad_loss_sum / max(train_steps, 1)
+
+            history["train_loss"].append(train_loss)
+            history['train_mse_loss'].append(train_mse_loss_sum)
+            history['train_pad_loss'].append(train_pad_loss_sum)
+
+            #print("Validation time:")
+            val_loss = 0
+            val_mse_loss_avg = 0
+            val_pad_loss_avg = 0
+
+            with torch.no_grad():
+                self.dit.eval()
+                for i, batch_data in enumerate(val_dataloader):
+                    self.forward(batch_data)
+
+                    val_loss += self.loss.item()
+                    val_mse_loss_avg = self.mse_loss.item()
+                    val_pad_loss_avg = self.pad_loss.item()
+
+
+            denom = max(len(val_dataloader), 1)
+            val_loss /= denom
+            val_mse_loss_avg /= denom
+            val_pad_loss_avg /= denom
+            history["val_loss"].append(val_loss)
+            history["val_mse_loss"].append(val_mse_loss_avg)
+            history["val_pad_loss"].append(val_pad_loss_avg)
+
+            if os.path.exists(pjoin(self.opt.model_dir, "tmp.tar")):
+                try:
+                    model_ckpt = torch.load(pjoin(self.opt.model_dir, "tmp.tar"), map_location="cpu")
+                    self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = epoch, train_batch_index = -1, total_it = it, history = history)
+                    del model_ckpt
+                except Exception as e:
+                    print(f"Failed to load checkpoint from {pjoin(self.opt.model_dir, 'tmp.tar')}. Skipping save to latest.tar. Error: {e}")
+                os.remove(pjoin(self.opt.model_dir, "tmp.tar")) # removing tar if latest stable is saved
+
+            if best_val - val_loss > min_delta:
+                best_val = val_loss
+                best_state = cpu_deepcopy_state(self.dit.state_dict())
+                epochs_without_improve = 0
+            else:
+                epochs_without_improve += 1
+
+            if epochs_without_improve >= patience:
+                print(f"Early stopping at epoch {epoch}, best val {best_val:.4f}")
+                self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = epoch, train_batch_index=-1, total_it=it, history = history, best_model_state=best_state)
+                self.save_loss_data(history = history)
+                break
+            
+
+            if epoch % self.opt.save_every_e == 0:
+                self.save(pjoin(self.opt.model_dir, "E%04d.tar" % epoch), ep = epoch, train_batch_index=-1, total_it=it, history = history)
+
+            if epoch % self.opt.log_every == 0:
+                print("Epoch:", epoch)
+                print(
+                    "Train Loss: %.5f"
+                    % (train_loss)
+                )
+                print(
+                    "Validation Loss: %.5f"
+                    % (val_loss)
+                )
+
+            if epoch % self.opt.eval_every_e == 0:
+                #data = torch.cat([self.recon_motions_by_part, self.motions_by_part], dim=0).detach().cpu().numpy()
+                save_dir = pjoin(self.opt.eval_dir, "E%04d" % epoch)
+                os.makedirs(save_dir, exist_ok=True)
+                #plot_eval(data, save_dir)
+                self.save_loss_data(history = history)
+            
+            epoch += 1
+
+        print("Epoch:", epoch)
+        print(
+            "Train Loss: %.5f"
+            % (train_loss)
+        )
+        print(
+            "Validation Loss: %.5f"
+            % (val_loss)
+        )
+        
+        self.save_loss_data(history = history)
