@@ -954,7 +954,7 @@ class MotionDiTTrainer(object):
         pred_speed = pred_vel.norm(dim = -1)
         target_speed = target_vel.norm(dim = -1)
         #root_vel_loss = F.mse_loss(pred_vel, target_vel)
-        root_vel_loss = F.l1_smooth_loss(pred_speed, target_speed)
+        root_vel_loss = F.smooth_l1_loss(pred_speed, target_speed)
 
         pos_loss = F.mse_loss(predicted_joints, target_joints)
 
