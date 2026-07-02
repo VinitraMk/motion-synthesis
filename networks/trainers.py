@@ -405,7 +405,10 @@ class MotionShortcutDiTTrainer(object):
 
         target_vel = feet_target[:, 1:] - feet_target[:, :-1]
         pred_vel = feet_pred[:, 1:] - feet_pred[:, :-1]
-        root_vel_loss = F.mse_loss(pred_vel, target_vel)
+        pred_speed = pred_vel.norm(dim = -1)
+        target_speed = target_vel.norm(dim = -1)
+        #root_vel_loss = F.mse_loss(pred_vel, target_vel)
+        root_vel_loss = F.smooth_l1_loss(pred_vel, target_vel)
 
         #target_speed_xy = torch.norm(target_vel[..., [0, 2]], dim = -1)
         target_height = feet_target[..., 1]
@@ -948,7 +951,11 @@ class MotionDiTTrainer(object):
 
         target_vel = root_target[:, 1:] - root_target[:, :-1]
         pred_vel = root_pred[:, 1:] - root_pred[:, :-1]
-        root_vel_loss = F.mse_loss(pred_vel, target_vel)
+        pred_speed = pred_vel.norm(dim = -1)
+        target_speed = target_vel.norm(dim = -1)
+        #root_vel_loss = F.mse_loss(pred_vel, target_vel)
+        root_vel_loss = F.l1_smooth_loss(pred_speed, target_speed)
+
         pos_loss = F.mse_loss(predicted_joints, target_joints)
 
         #target_speed_xy = torch.norm(target_vel[..., [0, 2]], dim = -1)
@@ -1111,11 +1118,11 @@ class MotionDiTTrainer(object):
         pred_motions = self.denormalize_motion(motion_pred.detach().cpu())
         gt_motions_jts = recover_from_ric(gt_motions.float(), self.joints_num)
         pred_motions_jts = recover_from_ric(pred_motions.float(), self.joints_num)
-        lambda_pos = 0#0.05
+        #lambda_pos = 0.05
         lambda_vel = 0.05
-        lambda_contact = 0.0#1
+        #lambda_contact = 0.01
         #print('jts shape: ', pred_motions_jts.shape, gt_motions_jts.shape)
-        self.contact_loss, self.pos_loss, self.root_vel_loss = self._compute_foot_contact_loss(pred_motions_jts, gt_motions_jts)
+        _, _, self.root_vel_loss = self._compute_foot_contact_loss(pred_motions_jts, gt_motions_jts)
         
 
         pad_mask = 1.0 - motion_masks_enc
@@ -1126,7 +1133,7 @@ class MotionDiTTrainer(object):
         # mse_loss
         self.mse_loss = F.mse_loss(masked_pred, masked_target)
 
-        self.loss = self.mse_loss + (lambda_pad * self.pad_loss) + (lambda_contact * self.contact_loss) + (lambda_pos * self.pos_loss) + (lambda_vel * self.root_vel_loss)
+        self.loss = self.mse_loss + (lambda_pad * self.pad_loss) + (lambda_vel * self.root_vel_loss)
 
 
     def update(self):
