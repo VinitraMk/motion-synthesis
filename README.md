@@ -39,25 +39,23 @@ inference cost while preserving motion quality.
 
 ### Basic Diffusion pipeline inference results
 <br/>
-<img src="assets/dit_results/inference_test_clip_96.gif" alt="Alt text">
+<img src="assets/dit_results/inference_test_clip_127.gif" alt="Alt text">
 <br/>
 <br/>
-<img src="assets/dit_results/inference_test_clip_99.gif" alt="Alt text">
-<br/>
-<br/>
-<img src="assets/dit_results/inference_test_clip_102.gif" alt="Alt text">
+<img src="assets/dit_results/inference_test_clip_133.gif" alt="Alt text">
 <br/>
 
 ## Interpretation of Current Results
 
 ### Diffusion model
-The diffusion model has been trained on the HumanML3D dataset with a transformer backend. It currently serves as 
-the primary baseline, and ongoing experiments add regularizers aimed at improving geometric plausibility (e.g., 
-reducing jitter, enforcing smoother trajectories and more realistic contact behavior). These baseline results 
-show usable motions, which now act as targets for the shortcut model
+The diffusion model is trained on the HumanML3D dataset with a transformer-based denoiser and currently serves as 
+the primary baseline for motion synthesis. It produces plausible motions for simple actions such as “walking”, 
+“jumping”, and “running”, but struggles to fully interpret complex text descriptions that combine multiple 
+actions or detailed spatial instructions. To improve temporal and contextual representation in latent space, 
+ongoing experiments focus on a transformer-based VAE backbone, which is intended to better capture motion 
+structure across time and enable stronger alignment with nuanced text prompts.
 
 ## Immediate Next Steps
-- Refine geometric regularization and architectural choices in the diffusion baseline to reduce jitter and 
-artifacts in generated motions.
+- Refine architectural choices in the diffusion baseline to synthesize more complex motions.
 - Train and evaluate a one-step (or few-step) shortcut motion model that approximates the baseline diffusion 
 outputs, with an emphasis on faster inference for both generation and editing.
