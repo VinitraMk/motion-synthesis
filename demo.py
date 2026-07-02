@@ -21,7 +21,7 @@ except Exception:
 class MotionPipeline:
     def __init__(self, dit, text_embedder, decoder, device, meta_dir,
         num_train_timesteps=1000,
-        num_inference_steps = 700,
+        num_inference_steps = 1000,
         beta_start=1e-4,
         beta_end=2e-2, prediction_type = "epsilon"):
 

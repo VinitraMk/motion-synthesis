@@ -1111,7 +1111,7 @@ class MotionDiTTrainer(object):
         pred_motions = self.denormalize_motion(motion_pred.detach().cpu())
         gt_motions_jts = recover_from_ric(gt_motions.float(), self.joints_num)
         pred_motions_jts = recover_from_ric(pred_motions.float(), self.joints_num)
-        lambda_pos = 0.05
+        lambda_pos = 0#0.05
         lambda_vel = 0.05
         lambda_contact = 0.01
         #print('jts shape: ', pred_motions_jts.shape, gt_motions_jts.shape)
@@ -1126,7 +1126,7 @@ class MotionDiTTrainer(object):
         # mse_loss
         self.mse_loss = F.mse_loss(masked_pred, masked_target)
 
-        self.loss = self.mse_loss + (lambda_pad * self.pad_loss) + (lambda_contact * self.contact_loss) + (lambda_pos * self.pos_loss) #+ (lambda_vel * self.root_vel_loss)
+        self.loss = self.mse_loss + (lambda_pad * self.pad_loss) + (lambda_contact * self.contact_loss) + (lambda_pos * self.pos_loss) + (lambda_vel * self.root_vel_loss)
 
 
     def update(self):
