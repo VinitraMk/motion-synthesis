@@ -1113,7 +1113,7 @@ class MotionDiTTrainer(object):
         pred_motions_jts = recover_from_ric(pred_motions.float(), self.joints_num)
         lambda_pos = 0#0.05
         lambda_vel = 0.05
-        lambda_contact = 0.01
+        lambda_contact = 0.0#1
         #print('jts shape: ', pred_motions_jts.shape, gt_motions_jts.shape)
         self.contact_loss, self.pos_loss, self.root_vel_loss = self._compute_foot_contact_loss(pred_motions_jts, gt_motions_jts)
         
