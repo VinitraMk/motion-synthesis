@@ -1026,8 +1026,8 @@ class MotionDiTTrainer(object):
             ("loss", "Total Loss"),
             ("mse_loss", "MSE Loss"),
             ("pad_loss", "Padding Loss"),
-            ("contact_loss", "Contact Loss"),
-            ("pos_loss", "Position Loss"),
+            #("contact_loss", "Contact Loss"),
+            #("pos_loss", "Position Loss"),
             ("root_vel_loss", "Root Velocity Loss")
         ]
 
@@ -1184,14 +1184,14 @@ class MotionDiTTrainer(object):
             "train_loss": [],
             "train_mse_loss": [],
             "train_pad_loss": [],
-            "train_contact_loss": [],
-            "train_pos_loss": [],
+            #"train_contact_loss": [],
+            #"train_pos_loss": [],
             "train_root_vel_loss": [],
             "val_loss": [],
             "val_mse_loss": [],
             "val_pad_loss": [],
-            "val_contact_loss": [],
-            "val_pos_loss": [],
+            #"val_contact_loss": [],
+            #"val_pos_loss": [],
             "val_root_vel_loss": [],
         }
         
@@ -1263,8 +1263,8 @@ class MotionDiTTrainer(object):
                 train_loss += self.loss.detach().cpu().item()
                 train_mse_loss_sum += self.mse_loss.detach().cpu().item()
                 train_pad_loss_sum += self.pad_loss.detach().cpu().item()
-                train_contact_loss_sum += self.contact_loss.detach().cpu().item()
-                train_pos_loss_sum += self.pos_loss.detach().cpu().item()
+                #train_contact_loss_sum += self.contact_loss.detach().cpu().item()
+                #train_pos_loss_sum += self.pos_loss.detach().cpu().item()
                 train_root_vel_loss_sum += self.root_vel_loss.detach().cpu().item()
 
                 train_steps += 1
@@ -1286,8 +1286,8 @@ class MotionDiTTrainer(object):
             history["train_loss"].append(train_loss)
             history['train_mse_loss'].append(train_mse_loss_sum)
             history['train_pad_loss'].append(train_pad_loss_sum)
-            history['train_contact_loss'].append(train_contact_loss_sum)
-            history['train_pos_loss'].append(train_pos_loss_sum)
+            #history['train_contact_loss'].append(train_contact_loss_sum)
+            #history['train_pos_loss'].append(train_pos_loss_sum)
             history['train_root_vel_loss'].append(train_root_vel_loss_sum)
 
             #print("Validation time:")
@@ -1306,8 +1306,8 @@ class MotionDiTTrainer(object):
                     val_loss += self.loss.item()
                     val_mse_loss_avg = self.mse_loss.item()
                     val_pad_loss_avg = self.pad_loss.item()
-                    val_contact_loss_avg = self.contact_loss.item()
-                    val_pos_loss_avg = self.pos_loss.item()
+                    #val_contact_loss_avg = self.contact_loss.item()
+                    #val_pos_loss_avg = self.pos_loss.item()
                     val_root_vel_loss_avg = self.root_vel_loss.item()
 
 
@@ -1318,8 +1318,8 @@ class MotionDiTTrainer(object):
             history["val_loss"].append(val_loss)
             history["val_mse_loss"].append(val_mse_loss_avg)
             history["val_pad_loss"].append(val_pad_loss_avg)
-            history["val_contact_loss"].append(val_contact_loss_avg)
-            history["val_pos_loss"].append(val_pos_loss_avg)
+            #history["val_contact_loss"].append(val_contact_loss_avg)
+            #history["val_pos_loss"].append(val_pos_loss_avg)
             history["val_root_vel_loss"].append(val_root_vel_loss_avg)
 
             if os.path.exists(pjoin(self.opt.model_dir, "tmp.tar")):
