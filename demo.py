@@ -19,7 +19,7 @@ except Exception:
     MATPLOTLIB_AVAILABLE = False
 
 class MotionPipeline:
-    def __init__(self, dit, text_embedder, decoder, device, meta_dir,
+    def __init__(self, dit: DiT, text_embedder, text_tokenizer, decoder, device, meta_dir,
         num_train_timesteps=1000,
         num_inference_steps = 1000,
         beta_start=1e-4,
@@ -28,6 +28,7 @@ class MotionPipeline:
         self.dit = dit
         self.dit.eval()
         self.text_embedder = text_embedder
+        self.text_tokenizer = text_tokenizer
         self.decoder = decoder
         self.device = device
         self.num_train_timesteps = num_train_timesteps
@@ -79,12 +80,12 @@ class MotionPipeline:
         return out.view(t.shape[0], *((1,) * (len(x_shape) - 1)))
 
     @torch.no_grad()
-    def _p_sample(self, x, t, text_tokens, text_mask=None):
+    def _p_sample(self, x, t, text_embeddings, text_mask=None):
         B = x.shape[0]
         t_batch = torch.full((B,), t, device=self.device, dtype=torch.long)
         d = torch.zeros_like(t_batch)
 
-        model_pred = self.dit(x, t_batch, d, text_tokens, text_mask)
+        model_pred = self.dit(x, t_batch, d, text_embeddings, text_mask)
 
         if self.prediction_type == "epsilon":
             betas_t = self._extract(self.betas, t_batch, x.shape)
@@ -116,10 +117,10 @@ class MotionPipeline:
             return model_mean + torch.sqrt(posterior_variance_t) * noise
 
     @torch.no_grad()
-    def _sample(self, text_tokens, seq_len, latent_dim, text_mask=None, batch_size=1):
+    def _sample(self, text_embeddings, seq_len, latent_dim, text_mask=None, batch_size=1):
         self.dit.eval()
 
-        text_tokens = text_tokens.to(self.device)
+        text_embeddings= text_embeddings.to(self.device)
         if text_mask is not None:
             text_mask = text_mask.to(self.device)
 
@@ -129,7 +130,7 @@ class MotionPipeline:
         timesteps = list(np.round(timesteps).astype(int))
 
         for t in reversed(timesteps):
-            x = self._p_sample(x, t, text_tokens, text_mask)
+            x = self._p_sample(x, t, text_embeddings, text_mask)
 
         return x
     
@@ -141,8 +142,8 @@ class MotionPipeline:
         z2 = z1.clone()
 
         #cond = self.text_embedder.encode(prompt, convert_to_tensor = True, device = str(self.device)).clone()
-        text_tokens, text_mask = self.text_embedder.encode_tokens(["a person walking slowly"])
-        text_tokens1, text_mask1 = self.text_embedder.encode_tokens(["a person twists from side to side"])
+        text_tokens, text_mask = self.text_embedder.encode_tokens(["a person walking"])
+        text_tokens1, text_mask1 = self.text_embedder.encode_tokens(["a person jumping"])
         print(prompt, num_inference_steps)
         print(text_tokens.mean().item(), text_tokens.std().item())
         print(text_tokens1.mean().item(), text_tokens1.std().item())
@@ -212,9 +213,11 @@ class MotionPipeline:
     
     @torch.no_grad()
     def __call__(self, prompt, max_motion_len, latent_dim = 512, batch_size = 1):
-        text_tokens, text_mask = self.text_embedder.encode_tokens([prompt])
+        inputs = self.text_tokenizer([prompt], return_tensors="pt", padding="max_length", truncation=True)
+        text_embeddings = self.text_embedder(**inputs).last_hidden_state
+        text_mask = inputs['attention_mask']
         latent = self._sample(
-            text_tokens = text_tokens,
+            text_embeddings = text_embeddings,
             seq_len=max_motion_len//4,
             latent_dim = latent_dim,
             text_mask = text_mask,
@@ -251,15 +254,14 @@ def load_models(device, model_dir, meta_dir, max_motion_length = 40):
     enc, dec = get_pretrained_vae(model_dir=model_dir)
     enc.eval()
     dec.eval()
-    #text_embedder = get_pretrained_text_encoder(device)
-    #text_embedder.eval()
-    text_encoder = TextTokenEncoder(device = device).to(device)
+    text_encoder, text_tokenizer = get_pretrained_text_encoder(model = "clip_text", device = device)
+    #text_encoder = TextTokenEncoder(device = device).to(device)
     text_encoder.eval()
-    dit_chkpt = torch.load(pjoin(model_dir, 'dit_stable_crossattn_full_best.tar'), map_location = device)
+    dit_chkpt = torch.load(pjoin(model_dir, 'dit_stable_crossattn_nano.tar'), map_location = device)
     dit = DiT(
         input_size = 512,
         hidden_size=1152,
-        text_dim=384,
+        text_dim=768,
         max_seq_len=max_motion_length//4
     )
     dit.load_state_dict(dit_chkpt['dit'])
@@ -269,6 +271,7 @@ def load_models(device, model_dir, meta_dir, max_motion_length = 40):
     pipe = MotionPipeline(
         dit=dit,
         text_embedder=text_encoder,
+        text_tokenizer=text_tokenizer,
         decoder=dec,
         device=device,
         meta_dir=meta_dir
