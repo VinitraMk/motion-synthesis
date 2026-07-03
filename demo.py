@@ -255,7 +255,7 @@ def load_models(device, model_dir, meta_dir, max_motion_length = 40):
     #text_embedder.eval()
     text_encoder = TextTokenEncoder(device = device).to(device)
     text_encoder.eval()
-    dit_chkpt = torch.load(pjoin(model_dir, 'dit_stable_crossattn_full.tar'), map_location = device)
+    dit_chkpt = torch.load(pjoin(model_dir, 'dit_stable_crossattn_full_v1.tar'), map_location = device)
     dit = DiT(
         input_size = 512,
         hidden_size=1152,
