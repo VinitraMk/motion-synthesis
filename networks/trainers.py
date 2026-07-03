@@ -405,7 +405,10 @@ class MotionShortcutDiTTrainer(object):
 
         target_vel = feet_target[:, 1:] - feet_target[:, :-1]
         pred_vel = feet_pred[:, 1:] - feet_pred[:, :-1]
-        root_vel_loss = F.mse_loss(pred_vel, target_vel)
+        pred_speed = pred_vel.norm(dim = -1)
+        target_speed = target_vel.norm(dim = -1)
+        #root_vel_loss = F.mse_loss(pred_vel, target_vel)
+        root_vel_loss = F.smooth_l1_loss(pred_vel, target_vel)
 
         #target_speed_xy = torch.norm(target_vel[..., [0, 2]], dim = -1)
         target_height = feet_target[..., 1]
@@ -943,28 +946,38 @@ class MotionDiTTrainer(object):
 
         B, T, J, _ = predicted_joints.shape
 
-        feet_pred = predicted_joints[:, :, foot_ids, :]
-        feet_target = target_joints[:, :, foot_ids, :]
+        root_pred = predicted_joints[:, :, 0, :]
+        root_target = target_joints[:, :, 0, :]
 
-        target_vel = feet_target[:, 1:] - feet_target[:, :-1]
-        pred_vel = feet_pred[:, 1:] - feet_pred[:, :-1]
-        root_vel_loss = F.mse_loss(pred_vel, target_vel)
+        target_vel = root_target[:, 1:] - root_target[:, :-1]
+        pred_vel = root_pred[:, 1:] - root_pred[:, :-1]
+        pred_speed = pred_vel.norm(dim = -1)
+        target_speed = target_vel.norm(dim = -1)
+        #root_vel_loss = F.mse_loss(pred_vel, target_vel)
+        root_vel_loss = F.smooth_l1_loss(pred_speed, target_speed)
+
+        pos_loss = F.mse_loss(predicted_joints, target_joints)
 
         #target_speed_xy = torch.norm(target_vel[..., [0, 2]], dim = -1)
+        feet_target = target_joints[:, :, foot_ids, :]
+        feet_pred = predicted_joints[:, :, foot_ids, :]
+        pred_feet_vel = feet_pred[:, 1:] - feet_pred[:, :-1]
         target_height = feet_target[..., 1]
         contact = (target_height < height_thresh).float()
 
-        pred_speed_xy = torch.norm(pred_vel[..., [0, 2]], dim = -1)
+        pred_speed_xy = torch.norm(pred_feet_vel[..., [0, 2]], dim = -1)
+        
+        #print('target height: ', contact.size(), target_height.size(), feet_target.size(), pred_speed_xy.size())
 
-        foot_pos_error = torch.norm(feet_pred - feet_target, dim = -1)
+        #foot_pos_error = torch.norm(feet_pred - feet_target, dim = -1)
         num = contact.sum()
         if num < 1:
             return predicted_joints.new_zeros(()), predicted_joints.new_zeros(()), root_vel_loss
 
         contact_loss = (contact[:, :-1, :] * (pred_speed_xy ** 2)).sum() / num
-        foot_pos_loss = (contact * foot_pos_error).sum() / num
+        #foot_pos_loss = (contact * foot_pos_error).sum() / num
 
-        return contact_loss, foot_pos_loss, root_vel_loss
+        return contact_loss, pos_loss, root_vel_loss
     
     def _extract(self, a, t, x_shape):
         out = a.gather(0, t)
@@ -996,6 +1009,11 @@ class MotionDiTTrainer(object):
         for opt in opt_list:
             opt.step()
 
+    def predict_x0_from_eps(self, x_t, eps_pred, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod, t):
+        a = self._extract(sqrt_alphas_cumprod, t, x_t.shape)
+        b = self._extract(sqrt_one_minus_alphas_cumprod, t, x_t.shape)
+        return (x_t - b * eps_pred) / (a + 1e-8)
+
     def denormalize_motion(self, motion):
         return motion * self.std + self.mean
 
@@ -1007,7 +1025,10 @@ class MotionDiTTrainer(object):
         loss_pairs = [
             ("loss", "Total Loss"),
             ("mse_loss", "MSE Loss"),
-            ("pad_loss", "Padding Loss")
+            ("pad_loss", "Padding Loss"),
+            #("contact_loss", "Contact Loss"),
+            #("pos_loss", "Position Loss"),
+            ("root_vel_loss", "Root Velocity Loss")
         ]
 
         for key, title in loss_pairs:
@@ -1091,6 +1112,19 @@ class MotionDiTTrainer(object):
         masked_pred = self.pred * motion_masks_enc
         masked_target = self.target * motion_masks_enc
 
+        x0_pred = self.predict_x0_from_eps(x_t, self.pred, self.sqrt_alphas_cumprod, self.sqrt_one_minus_alphas_cumprod, t)
+        motion_pred = self.decoder(x0_pred)
+        gt_motions = self.denormalize_motion(motions.detach().cpu())
+        pred_motions = self.denormalize_motion(motion_pred.detach().cpu())
+        gt_motions_jts = recover_from_ric(gt_motions.float(), self.joints_num)
+        pred_motions_jts = recover_from_ric(pred_motions.float(), self.joints_num)
+        #lambda_pos = 0.05
+        lambda_vel = 0.05
+        #lambda_contact = 0.01
+        #print('jts shape: ', pred_motions_jts.shape, gt_motions_jts.shape)
+        _, _, self.root_vel_loss = self._compute_foot_contact_loss(pred_motions_jts, gt_motions_jts)
+        
+
         pad_mask = 1.0 - motion_masks_enc
         pad_pred = self.pred * pad_mask
         self.pad_loss = (pad_pred ** 2).mean()
@@ -1099,7 +1133,7 @@ class MotionDiTTrainer(object):
         # mse_loss
         self.mse_loss = F.mse_loss(masked_pred, masked_target)
 
-        self.loss = self.mse_loss + (lambda_pad * self.pad_loss)
+        self.loss = self.mse_loss + (lambda_pad * self.pad_loss) + (lambda_vel * self.root_vel_loss)
 
 
     def update(self):
@@ -1150,9 +1184,15 @@ class MotionDiTTrainer(object):
             "train_loss": [],
             "train_mse_loss": [],
             "train_pad_loss": [],
+            #"train_contact_loss": [],
+            #"train_pos_loss": [],
+            "train_root_vel_loss": [],
             "val_loss": [],
             "val_mse_loss": [],
             "val_pad_loss": [],
+            #"val_contact_loss": [],
+            #"val_pos_loss": [],
+            "val_root_vel_loss": [],
         }
         
         print("Number of epochs:", self.opt.max_epoch)
@@ -1193,6 +1233,9 @@ class MotionDiTTrainer(object):
         val_loss = 0
         val_mse_loss_avg = 0
         val_pad_loss_avg = 0
+        val_contact_loss_avg = 0
+        val_pos_loss_avg = 0
+        val_root_vel_loss_avg = 0
         best_val = float("inf")
         best_state = None
         patience = 10
@@ -1204,6 +1247,9 @@ class MotionDiTTrainer(object):
             train_loss = 0.0
             train_mse_loss_sum = 0.0
             train_pad_loss_sum = 0.0
+            train_contact_loss_sum = 0.0
+            train_pos_loss_sum = 0.0
+            train_root_vel_loss_sum = 0.0
             train_steps = 0
             for i, batch_data in enumerate(train_dataloader):
                 '''
@@ -1217,6 +1263,9 @@ class MotionDiTTrainer(object):
                 train_loss += self.loss.detach().cpu().item()
                 train_mse_loss_sum += self.mse_loss.detach().cpu().item()
                 train_pad_loss_sum += self.pad_loss.detach().cpu().item()
+                #train_contact_loss_sum += self.contact_loss.detach().cpu().item()
+                #train_pos_loss_sum += self.pos_loss.detach().cpu().item()
+                train_root_vel_loss_sum += self.root_vel_loss.detach().cpu().item()
 
                 train_steps += 1
 
@@ -1230,15 +1279,24 @@ class MotionDiTTrainer(object):
             train_loss = train_loss / max(train_steps, 1)
             train_mse_loss_sum = train_mse_loss_sum / max(train_steps, 1)
             train_pad_loss_sum = train_pad_loss_sum / max(train_steps, 1)
+            train_contact_loss_sum = train_contact_loss_sum / max(train_steps, 1)
+            train_pos_loss_sum  = train_pos_loss_sum / max(train_steps, 1)
+            train_root_vel_loss_sum = train_root_vel_loss_sum / max(train_steps, 1)
 
             history["train_loss"].append(train_loss)
             history['train_mse_loss'].append(train_mse_loss_sum)
             history['train_pad_loss'].append(train_pad_loss_sum)
+            #history['train_contact_loss'].append(train_contact_loss_sum)
+            #history['train_pos_loss'].append(train_pos_loss_sum)
+            history['train_root_vel_loss'].append(train_root_vel_loss_sum)
 
             #print("Validation time:")
             val_loss = 0
             val_mse_loss_avg = 0
             val_pad_loss_avg = 0
+            val_contact_loss_avg = 0
+            val_pos_loss_avg = 0
+            val_root_vel_loss_avg = 0
 
             with torch.no_grad():
                 self.dit.eval()
@@ -1248,6 +1306,9 @@ class MotionDiTTrainer(object):
                     val_loss += self.loss.item()
                     val_mse_loss_avg = self.mse_loss.item()
                     val_pad_loss_avg = self.pad_loss.item()
+                    #val_contact_loss_avg = self.contact_loss.item()
+                    #val_pos_loss_avg = self.pos_loss.item()
+                    val_root_vel_loss_avg = self.root_vel_loss.item()
 
 
             denom = max(len(val_dataloader), 1)
@@ -1257,6 +1318,9 @@ class MotionDiTTrainer(object):
             history["val_loss"].append(val_loss)
             history["val_mse_loss"].append(val_mse_loss_avg)
             history["val_pad_loss"].append(val_pad_loss_avg)
+            #history["val_contact_loss"].append(val_contact_loss_avg)
+            #history["val_pos_loss"].append(val_pos_loss_avg)
+            history["val_root_vel_loss"].append(val_root_vel_loss_avg)
 
             if os.path.exists(pjoin(self.opt.model_dir, "tmp.tar")):
                 try:
