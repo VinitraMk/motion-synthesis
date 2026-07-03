@@ -214,6 +214,7 @@ class MotionPipeline:
     @torch.no_grad()
     def __call__(self, prompt, max_motion_len, latent_dim = 512, batch_size = 1):
         inputs = self.text_tokenizer([prompt], return_tensors="pt", padding="max_length", truncation=True)
+        inputs = {name: tensor.to(self.device) for name, tensor in inputs.items()}
         text_embeddings = self.text_embedder(**inputs).last_hidden_state
         text_mask = inputs['attention_mask']
         latent = self._sample(

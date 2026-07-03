@@ -721,6 +721,7 @@ class DiffusionValidator:
             #sample_texts
         #)
         inputs = self.text_tokenizer(sample_texts, return_tensors="pt", padding=True, truncation=True)
+        inputs = {name: tensor.to(self.device) for name, tensor in inputs.items()}
         text_embeddings = self.text_embedder(**inputs).last_hidden_state
         text_masks = inputs['attention_mask']
         B = min(x.shape[0], self.samples_to_test)
@@ -777,6 +778,7 @@ class DiffusionValidator:
         #x = batch_motion_parts[random_sample_idx].unsqueeze(0).float()
         random.shuffle(prompts)
         inputs = self.text_tokenizer(prompts, return_tensors="pt", padding=True, truncation=True)
+        inputs = {name: tensor.to(self.device) for name, tensor in inputs.items()}
         text_embeddings = self.text_embedder(**inputs).last_hidden_state
         text_masks = inputs['attention_mask']
         B = min(text_embeddings.shape[0], self.samples_to_test)

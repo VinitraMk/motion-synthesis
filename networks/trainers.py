@@ -1072,6 +1072,7 @@ class MotionDiTTrainer(object):
             self.latents = self.encoder(motions[:, :, :-4])
             #self.text_tokens, self.text_mask = self.text_encoder.encode_tokens(texts)
             inputs = self.text_tokenizer(texts, return_tensors="pt", padding="max_length", truncation=True)
+            inputs = {name: tensor.to(self.device) for name, tensor in inputs.items()}
             self.text_embeddings = self.text_encoder(**inputs).last_hidden_state
             self.text_mask = inputs['attention_mask']
 
