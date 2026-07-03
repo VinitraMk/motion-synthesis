@@ -642,3 +642,65 @@ def render_skeleton_animation(
             print('GIF file not saved: ', exec)
     plt.close(fig)
     return saved_path
+
+
+def render_skeleton_single_animation(
+    joints_recon: np.ndarray,
+    output_path_no_ext: str,
+    clip_id: str,
+    text = None,
+    recon_caption: str = "",
+    skeleton_edges=HUMANML3D_SKELETON_EDGES,
+    fps: int = 20,
+    save_gif_fallback: bool = True,
+):
+    if not(MATPLOTLIB_AVAILABLE):
+        print("Matplotlib not available")
+        return None
+    
+    joints_recon = np.asarray(joints_recon)
+
+    num_frames = joints_recon.shape[0]
+    joints_recon = joints_recon[:num_frames]
+    recon_caption = recon_caption if recon_caption != "" else "Recon"
+    plt.clf()
+    fig = plt.figure(figsize=(8, 5))
+    ax = fig.add_subplot(111, projection='3d')
+        
+    caption = text if text else clip_id
+    fig.suptitle(caption, fontsize = 12, y = 0.98)
+    xyz = joints_recon.reshape(-1, 3)
+
+    def update(frame_idx):
+        _draw_skeleton_frame(ax, joints_recon[frame_idx], skeleton_edges, f"{recon_caption} frame={frame_idx}")
+        _set_equal_3d_axes(ax, xyz)
+        return []
+
+    anim = FuncAnimation(fig, update, frames=num_frames, interval=max(1, int(1000 / fps)), blit=False)
+
+    saved_path = None
+    '''
+    if save_mp4:
+        try:
+            mp4_path = output_path_no_ext + ".mp4"
+            writer = FFMpegWriter(fps=fps, metadata={"artist": "vqvae-validator"})
+            anim.save(mp4_path, writer=writer)
+            saved_path = mp4_path
+        except Exception as exc:
+            print('file path: ', output_path_no_ext)
+            print('Failed to save motion mp4: ', exc)
+            saved_path = None
+    '''
+
+    if saved_path is None and save_gif_fallback:
+        try:
+            gif_path = output_path_no_ext + ".gif"
+            writer = PillowWriter(fps=num_frames)
+            anim.save(gif_path, writer=writer)
+            saved_path = gif_path
+        except Exception as exec:
+            saved_path = None
+            print('GIF file not saved: ', exec)
+    plt.close(fig)
+    return saved_path
+

@@ -1,5 +1,6 @@
 import csv
 import math
+from modulefinder import test
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, List
@@ -9,11 +10,12 @@ import torch
 import random
 from utils.utils import ensure_dir
 from utils.nn_utils import move_batch_to_device
-from data_utils.motion_processor import render_skeleton_animation, HUMANML3D_SKELETON_EDGES
+from data_utils.motion_processor import render_skeleton_animation, HUMANML3D_SKELETON_EDGES, render_skeleton_single_animation
 from data_utils.motion_processor import recover_from_ric
 from os.path import join as pjoin
 from networks.autoencoder_modules import MovementConvDecoder, MovementConvEncoder
 from utils.pretrained_model_utils import get_pretrained_vae, get_pretrained_text_encoder
+from networks.transformer_modules import TextTokenEncoder
 
 # this will just validate whether latents from training/validation sample and close to those samples
 # reconstruct without errors
@@ -431,7 +433,7 @@ class VQVAEValidator:
 # reconstruct without errors
 class DiffusionValidator:
 
-    def __init__(self, opt, dit, val_dataloader, test_loader,
+    def __init__(self, opt, dit, val_dataloader, test_dataloader,
             test_type: str = "val", samples_to_test: int = 5,
             video_dir_name: str = 'videos', tensors_dir_name: str = 'tensors', metrics_dir_name: str = 'metrics',
             beta_start = 1e-4, beta_end = 0.02, prediction_type = "epsilon", num_train_timesteps: int = 1000, num_inference_steps: int = 1000):
@@ -439,7 +441,7 @@ class DiffusionValidator:
         self.dit = dit
         self.dit.eval()
         self.val_dataloader = val_dataloader
-        self.test_loader = test_loader
+        self.test_dataloader = test_dataloader
         self.test_type = test_type
         self.samples_to_test = samples_to_test
         self.sampling_seed = 42
@@ -450,6 +452,7 @@ class DiffusionValidator:
         self.videos_dir = pjoin(opt.output_dir, f'{video_dir_name}')
         self.tensors_dir = pjoin(opt.output_dir, f'{tensors_dir_name}')
         self.metrics_dir = pjoin(opt.output_dir, f'{metrics_dir_name}')
+        self.simple_test_split_file = pjoin(opt.data_root, 'simple_test.txt')
         ensure_dir(self.videos_dir)
         ensure_dir(self.tensors_dir)
         ensure_dir(self.metrics_dir)
@@ -473,13 +476,15 @@ class DiffusionValidator:
 
         self._init_pretrained_models()
         self._build_schedule(beta_start, beta_end, self.num_train_timesteps)
+        self.text_proj = torch.nn.Linear(384, 256)
+        self.motion_proj = torch.nn.Linear(263, 256)
         
 
     def _init_pretrained_models(self):
-        self.pretrained_movementenc, self.pretrained_movementdec = get_pretrained_vae(self.opt.checkpoints_dir) 
+        self.pretrained_movementenc, self.pretrained_movementdec = get_pretrained_vae(self.opt.model_dir) 
         self.pretrained_movementenc.to(self.device)
         self.pretrained_movementdec.to(self.device)
-        self.text_embedder = get_pretrained_text_encoder(self.device)
+        self.text_embedder = TextTokenEncoder(device = self.device)
 
         self.text_embedder.eval()
         self.pretrained_movementenc.eval()
@@ -588,10 +593,13 @@ class DiffusionValidator:
         text_feats: torch.Tensor,
     ) -> Dict[str, float]:
         """
-        gen_feats: [N, D] motion features for generated motions
-        gt_feats:  [N, D] motion features for ground-truth motions
+        gen_feats: [N, T, D] motion features for generated motions
+        gt_feats:  [N, T, D] motion features for ground-truth motions
         text_feats: [N, D_text] text features for captions
         """
+        if gen_feats.dim() == 3:
+            gen_feats = gen_feats.mean(dim=1)
+            gt_feats = gt_feats.mean(dim=1)
         # FID: Fréchet distance between generated and GT motion feature distributions
         mu_gen = gen_feats.mean(dim=0)
         mu_gt = gt_feats.mean(dim=0)
@@ -599,41 +607,47 @@ class DiffusionValidator:
         cov_gt = torch.cov(gt_feats.T)
 
         mean_diff = (mu_gen - mu_gt).unsqueeze(0)
+        mean_term = (mean_diff @ mean_diff.T).item()
         # Small epsilon for numerical stability
         eps = 1e-6
-        cov_prod = (cov_gen @ cov_gt + eps * torch.eye(cov_gen.size(0), device=cov_gen.device))
-        covmean = torch.linalg.sqrtm(cov_prod.cpu().numpy())
-        if not np.isfinite(covmean).all():
-            covmean = np.eye(cov_gen.size(0), dtype=np.float64)
-        covmean = torch.from_numpy(covmean).to(gen_feats.device)
+        cov_gen_eps = cov_gen + eps * torch.eye(cov_gen.size(0), device=cov_gen.device)
+        cov_gt_eps = cov_gt + eps * torch.eye(cov_gt.size(0), device=cov_gt.device)
+        cov_prod = cov_gen_eps @ cov_gt_eps
+        cov_prod = cov_prod.cpu()
+        evals, _ = torch.linalg.eig(cov_prod)
+        
+        evals = evals.real.clamp(min = 0)
+        sqrt_evals = torch.sqrt(evals)
 
-        fid = (
-            mean_diff @ mean_diff.T
-            + torch.trace(cov_gen + cov_gt - 2 * covmean)
-        ).item()
+        trace_sqrt = sqrt_evals.sum().item()
+        trace_gen = torch.trace(cov_gen_eps).item()
+        trace_gt = torch.trace(cov_gt_eps).item()
+        fid = mean_term + trace_gen + trace_gt - (2.0 * trace_sqrt)
 
         # R-Precision: text-motion retrieval
         # cosine similarity between text_feats and motion_feats (generated)
-        text_norm = torch.nn.functional.normalize(text_feats, dim=-1)
-        motion_norm = torch.nn.functional.normalize(gen_feats, dim=-1)
+        t = torch.nn.functional.normalize(self.text_proj(text_feats), dim=-1)    # [N, 256]
+        m = torch.nn.functional.normalize(self.motion_proj(gen_feats), dim=-1) # [N, 256]
+        text_norm = torch.nn.functional.normalize(t, dim=-1)
+        motion_norm = torch.nn.functional.normalize(m, dim=-1)
         sim = text_norm @ motion_norm.T  # [N, N]
 
         # For each text, rank motions
         ranks = sim.argsort(dim=1, descending=True)
         gt_indices = torch.arange(sim.size(0), device=sim.device)
 
-        def r_precision_at_k(k: int) -> float:
+        def r_precision_at_k(k: int, gt_indices: torch.Tensor) -> float:
             topk = ranks[:, :k]
             correct = (topk == gt_indices.unsqueeze(1)).any(dim=1).float()
             return correct.mean().item()
 
-        r1 = r_precision_at_k(1)
-        r2 = r_precision_at_k(2)
-        r3 = r_precision_at_k(3)
+        r1 = r_precision_at_k(1, gt_indices[:1])
+        r2 = r_precision_at_k(2, gt_indices[:2])
+        r3 = r_precision_at_k(3, gt_indices[:3])
 
         # MM-Dist: mean distance between matched text-motion embeddings
         # (using generated motion features)
-        mm_dist = (1.0 - (text_norm * motion_norm).sum(dim=-1)).mean().item()
+        mm_dist = (1.0 - (text_norm * motion_norm.unsqueeze(1)).sum(dim=-1)).mean().item()
 
         # Diversity: average L2 distance between random pairs of generated motion features
         if gen_feats.size(0) > 1:
@@ -696,50 +710,29 @@ class DiffusionValidator:
         return motion * self.std + self.mean
 
     @torch.no_grad()
-    def _get_result_from_dit(self, test_type: str, x: torch.Tensor, clip_ids: str, sample_texts: str):
+    def _get_result_from_dit(self, test_type: str, x: torch.Tensor, clip_ids: List[str], sample_texts: List[str], save_samples_test: bool = False):
         #x = batch_motion_parts[random_sample_idx].unsqueeze(0).float()
         text_tokens, text_masks = self.text_embedder.encode_tokens(
             sample_texts
-        ).clone()
-        B = x.shape[0]
+        )
+        B = min(x.shape[0], self.samples_to_test)
         latents = self._sample(
             text_tokens=text_tokens,
             seq_len=self.opt.max_motion_length//4,
             latent_dim = 512,
             text_mask = text_masks,
-            batch_size = B
+            batch_size = x.shape[0]
         )
         x_recons = self.pretrained_movementdec(latents)
+        print('Reconstructed motion shape:', x_recons.shape, x.shape, text_tokens.shape)
         ds_metrics = self._compute_dataset_metrics(x_recons, x, text_tokens)
 
-        #print(type(metrics['l1']), type(out['loss']))
-        '''
-        row = {
-            'clip_id': clip_id,
-            'snippet_id': sample_id,
-            'shape': tuple(x.shape),
-            'l1': metrics['l1'],
-            'mse': metrics['mse'],
-            'rmse': metrics['rmse'],
-            'max_abs': metrics['max_abs'],
-            'full_text': full_text,
-            'sample_text': sample_text
-        }
-
-        # save output tensors
-        torch.save({
-            'snippet_id': sample_id,
-            'x': x.detach().cpu(),
-            'x_recon': x_recon.detach().cpu(),
-        }, os.path.join(self.tensors_dir, f'{sample_id}.pt'))
-        '''
-
         # extract video
-        if test_type == "val":
+        if test_type == "val" or save_samples_test:
             for i in range(B):
                 gt_motion = x[i]
                 recon_motion = x_recons[i]
-                clip_id = clip_ids[i]
+                clip_id = f'{test_type}_{clip_ids[i]}'
                 sample_text = sample_texts[i]
                 try:
                     #full_motion_gt = self.motion_parts_to_full_motion(x.detach().cpu())
@@ -770,78 +763,132 @@ class DiffusionValidator:
                 except Exception as exc:
                     print('inside except: ', exc)
         return ds_metrics
+    
+    @torch.no_grad()
+    def _get_prompts_results_from_dit(self, prompts: List[str]):
+        #x = batch_motion_parts[random_sample_idx].unsqueeze(0).float()
+        random.shuffle(prompts)
+        text_tokens, text_masks = self.text_embedder.encode_tokens(
+            prompts
+        )
+        B = min(text_tokens.shape[0], self.samples_to_test)
+        latents = self._sample(
+            text_tokens=text_tokens[:B, ...],
+            seq_len=self.opt.max_motion_length//4,
+            latent_dim = 512,
+            text_mask = text_masks[:B, ...],
+            batch_size = B
+        )
+        x_recons = self.pretrained_movementdec(latents)
+        print('Reconstructed motion shape:', x_recons.shape, text_tokens.shape)
+
+        # extract video
+        for i in range(B):
+            recon_motion = x_recons[i]
+            sample_text = prompts[i]
+            clip_id = f'prompt_{i}'
+            try:
+                #full_motion_gt = self.motion_parts_to_full_motion(x.detach().cpu())
+                #print('full motion gt in vqvae: ', full_motion_gt[..., self.missing_parts_indices])
+                full_motion_recon = self.denormalize_motion(recon_motion.detach().cpu().numpy())
+                joints_recon = recover_from_ric(torch.from_numpy(full_motion_recon).float(), self.joints_num)
+
+                video_path = render_skeleton_single_animation(
+                    joints_recon=joints_recon,
+                    output_path_no_ext=pjoin(self.videos_dir, clip_id),
+                    clip_id=clip_id,
+                    text=sample_text,
+                    recon_caption='Baseline Diffusion',
+                    fps=120,
+                    save_gif_fallback=True
+                )
+                if joints_recon is not None:
+                    print('joints recon', joints_recon.shape, self.videos_dir)
+                    if video_path != "" or video_path != None:
+                        print('Saved video file at: ', video_path)
+            except Exception as exc:
+                print('inside except: ', exc)
 
     
-    def validate_dataset(self, dataloader, test_type = 'val'):
+    def validate_dataset(self, dataloader = None):
 
         #self.vqvae.eval()
-        rng = random.Random(self.sampling_seed)
-        num_batches = len(dataloader)
-        random_batch_idx = rng.sample(range(num_batches), 1)[0]
+        
         ds_metrics = {}
 
-        for bi, batch in enumerate(dataloader):
+        if self.test_type in ['test', 'val'] and dataloader != None:
+            rng = random.Random(self.sampling_seed)
+            num_batches = len(dataloader)
+            random_batch_idx = rng.sample(range(num_batches), 1)[0]
+            for bi, batch in enumerate(dataloader):
 
-            if test_type == 'val' and bi == random_batch_idx:
-                batch = batch[:self.samples_to_test, ...]
-                batch = move_batch_to_device(batch, self.device)
-                batch_motion_parts = batch['motion_parts']
-                batch_motion = batch['motion']
-                batch_size = batch_motion_parts.size(0)
+                if self.test_type == 'val' and bi == random_batch_idx:
+                    batch = move_batch_to_device(batch, self.device)
+                    batch_motion_parts = batch['motion_parts'][:self.samples_to_test,...]
+                    batch_motion = batch['motion'][:self.samples_to_test,...]
+                    batch_size = batch_motion_parts.size(0)
 
-                batch_text = batch['text']
-                #print('batch texts: ', batch_text)
-                clip_ids = batch['file_id']
-                #clip_id = clip_ids[random_sample_idx]
-                #pret_sample_id = f'prevae_val_{clip_id}'
+                    batch_text = batch['text'][:self.samples_to_test]
+                    #print('batch texts: ', batch_text)
+                    clip_ids = batch['file_id'][:self.samples_to_test]
+                    #clip_id = clip_ids[random_sample_idx]
+                    #pret_sample_id = f'prevae_val_{clip_id}'
 
-                x = batch_motion_parts.float()
-                x_motion = batch_motion.float()
-                ds_metrics = self._get_result_from_dit(
-                    test_type=test_type,
-                    x = x_motion,
-                    clip_ids=clip_ids,
-                    sample_texts=batch_text
-                )
+                    x_motion = batch_motion.float()
+                    ds_metrics = self._get_result_from_dit(
+                        test_type=self.test_type,
+                        x = x_motion,
+                        clip_ids=clip_ids,
+                        sample_texts=batch_text
+                    )
+
+                elif self.test_type == 'test':
+                    batch = move_batch_to_device(batch, self.device)
+                    batch_motion_parts = batch['motion_parts']
+                    batch_motion = batch['motion']
+
+                    batch_text = batch['text']
+                    #print('batch texts: ', batch_text)
+                    clip_ids = batch['file_id']
+
+                    x_motion = batch_motion.float()
+                    ds_metrics_batch = self._get_result_from_dit(
+                        test_type = self.test_type,
+                        x = x_motion,
+                        clip_ids=clip_ids,
+                        sample_texts=batch_text,
+                        save_samples_test=True
+                    )
+                    if ds_metrics == {}:
+                        ds_metrics = ds_metrics_batch
+                    else:
+                        for key in ds_metrics_batch:
+                            if key in ds_metrics:
+                                ds_metrics[key] += ds_metrics_batch[key]
+                            else:
+                                ds_metrics[key] = ds_metrics_batch[key]
+            if self.test_type == 'test':
+                ds_metrics = { k: v / num_batches for k, v in ds_metrics.items() }
+            metrics_path = pjoin(self.metrics_dir, f'{self.test_type}_metrics.json')
+            with open(metrics_path, "w") as f:
+                json.dump(ds_metrics, f, indent=4)
+        else:
+            simple_prompts = []
+            with open(self.simple_test_split_file, 'r') as f:
+                simple_prompts = f.readlines()
+            assert len(simple_prompts) != 0, "Simple test prompts file is empty!"
+
+            self._get_prompts_results_from_dit(prompts = simple_prompts)
                 
-            elif test_type == 'test' or test_type == 'test_simple':
-                batch = move_batch_to_device(batch, self.device)
-                batch_motion_parts = batch['motion_parts']
-                batch_motion = batch['motion']
-                batch_size = batch_motion_parts.size(0)
-
-                batch_text = batch['text']
-                #print('batch texts: ', batch_text)
-                clip_ids = batch['file_id']
-                random_sample_idx = rng.sample(range(batch_size), 1)[0]
-                clip_id = clip_ids[random_sample_idx]
-                pret_sample_id = f'prevae_val_{clip_id}'
-
-                x = batch_motion_parts[random_sample_idx].unsqueeze(0).float()
-                x_motion = batch_motion[random_sample_idx].unsqueeze(0).float()
-                #ds_metrics = self._get_result_from_dit(
-                    #x = x_motion,
-                    #clip_id=clip_ids[random_sample_idx],
-                    #sample_id = pret_sample_id,
-                    #sample_text=batch_text[random_sample_idx],
-                    #full_text=batch_text[random_sample_idx]
-                #)
-                
-
-        metrics_path = pjoin(self.metrics_dir, f'{test_type}_metrics.json')
-        with open(metrics_path, "w") as f:
-            json.dump(ds_metrics, f, indent=4)
-
-        metrics_path = pjoin(self.metrics_dir, f'prevae_{test_type}_metrics.json')
-        with open(metrics_path, 'w') as f:
-            json.dump(ds_metrics, f, indent = 4)
-
+        
+        
 
     def validate(self):
         
         # test for memorization of samples
-        self.validate_dataset(self.val_dataloader)
-        #self.validate_dataset(self.val_dataloader)
-        #self.validate_interpolated_samples()
-        
+        if self.test_type == "val":
+            self.validate_dataset(self.val_dataloader)
+        else:
+            self.validate_dataset(self.test_dataloader)
+
         #return train_eval_results, val_eval_results, interpolation_results, uniform_sampling_results
