@@ -885,8 +885,8 @@ class MotionDiTTrainer(object):
         )
 
         self.vae = None
-        #self.text_encoder = get_pretrained_text_encoder(self.device)
-        self.text_encoder = TextTokenEncoder(device = self.device).to(self.device)
+        self.text_encoder, self.text_tokenizer = get_pretrained_text_encoder(model = 'clip_text', device = self.device)
+        #self.text_encoder = TextTokenEncoder(device = self.device).to(self.device)
         self.text_encoder.eval()
 
         self.mean = np.load(pjoin(self.opt.meta_dir, 'mean.npy'))
@@ -1070,12 +1070,10 @@ class MotionDiTTrainer(object):
 
         with torch.no_grad():
             self.latents = self.encoder(motions[:, :, :-4])
-            #text_emb = self.text_encoder.encode(
-                #texts,
-                #convert_to_tensor = True,
-                #device = str(self.device)
-            #).float()
-            self.text_tokens, self.text_mask = self.text_encoder.encode_tokens(texts)
+            #self.text_tokens, self.text_mask = self.text_encoder.encode_tokens(texts)
+            inputs = self.text_tokenizer(texts, return_tensors="pt", padding="max_length", truncation=True)
+            self.text_embeddings = self.text_encoder(**inputs).last_hidden_state
+            self.text_mask = inputs['attention_mask']
 
         B = self.latents.shape[0]
         t = torch.randint(
@@ -1093,8 +1091,8 @@ class MotionDiTTrainer(object):
         # Check inputs to DiT
         if torch.isnan(x_t).any():
             print("NaN in xt")
-        if torch.isnan(self.text_tokens).any():
-            print("NaN in text_tokens")
+        if torch.isnan(self.text_embeddings).any():
+            print("NaN in text_embeddings")
         if torch.isnan(self.target).any():
             print("NaN in target")
 
@@ -1102,7 +1100,7 @@ class MotionDiTTrainer(object):
             x_t,
             t,
             d,
-            self.text_tokens,
+            self.text_embeddings,
             text_mask = self.text_mask
         )
         # Check output of DiT and loss

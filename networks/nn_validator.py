@@ -476,15 +476,17 @@ class DiffusionValidator:
 
         self._init_pretrained_models()
         self._build_schedule(beta_start, beta_end, self.num_train_timesteps)
-        self.text_proj = torch.nn.Linear(384, 256)
-        self.motion_proj = torch.nn.Linear(263, 256)
+        self.text_proj = torch.nn.Linear(768, 512)
+        #self.motion_proj = torch.nn.Linear(263, 256)
         
 
     def _init_pretrained_models(self):
         self.pretrained_movementenc, self.pretrained_movementdec = get_pretrained_vae(self.opt.model_dir) 
         self.pretrained_movementenc.to(self.device)
         self.pretrained_movementdec.to(self.device)
-        self.text_embedder = TextTokenEncoder(device = self.device)
+
+        #self.text_embedder = TextTokenEncoder(device = self.device)
+        self.text_embedder, self.text_tokenizer = get_pretrained_text_encoder(model = 'clip_text', device = self.device)
 
         self.text_embedder.eval()
         self.pretrained_movementenc.eval()
@@ -624,12 +626,14 @@ class DiffusionValidator:
         trace_gt = torch.trace(cov_gt_eps).item()
         fid = mean_term + trace_gen + trace_gt - (2.0 * trace_sqrt)
 
+        # TODO: skipping text-motion retrieval metrics for now 
+        '''
         # R-Precision: text-motion retrieval
         # cosine similarity between text_feats and motion_feats (generated)
-        t = torch.nn.functional.normalize(self.text_proj(text_feats), dim=-1)    # [N, 256]
-        m = torch.nn.functional.normalize(self.motion_proj(gen_feats), dim=-1) # [N, 256]
+        t = torch.nn.functional.normalize(self.dit.encode_text_to_motion_space(text_feats), dim=-1)    # [N, 512]
+        #m = torch.nn.functional.normalize(self.motion_proj(gen_feats), dim=-1) # [N, 512]
         text_norm = torch.nn.functional.normalize(t, dim=-1)
-        motion_norm = torch.nn.functional.normalize(m, dim=-1)
+        motion_norm = torch.nn.functional.normalize(gen_feats, dim=-1)
         sim = text_norm @ motion_norm.T  # [N, N]
 
         # For each text, rank motions
@@ -648,6 +652,7 @@ class DiffusionValidator:
         # MM-Dist: mean distance between matched text-motion embeddings
         # (using generated motion features)
         mm_dist = (1.0 - (text_norm * motion_norm.unsqueeze(1)).sum(dim=-1)).mean().item()
+        '''
 
         # Diversity: average L2 distance between random pairs of generated motion features
         if gen_feats.size(0) > 1:
@@ -661,10 +666,10 @@ class DiffusionValidator:
 
         return {
             "fid": fid,
-            "r_precision_top1": r1,
-            "r_precision_top2": r2,
-            "r_precision_top3": r3,
-            "mm_dist": mm_dist,
+            #"r_precision_top1": r1,
+            #"r_precision_top2": r2,
+            #"r_precision_top3": r3,
+            #"mm_dist": mm_dist,
             "diversity": diversity,
         }
 
@@ -712,20 +717,23 @@ class DiffusionValidator:
     @torch.no_grad()
     def _get_result_from_dit(self, test_type: str, x: torch.Tensor, clip_ids: List[str], sample_texts: List[str], save_samples_test: bool = False):
         #x = batch_motion_parts[random_sample_idx].unsqueeze(0).float()
-        text_tokens, text_masks = self.text_embedder.encode_tokens(
-            sample_texts
-        )
+        #text_tokens, text_masks = self.text_embedder.encode_tokens(
+            #sample_texts
+        #)
+        inputs = self.text_tokenizer(sample_texts, return_tensors="pt", padding=True, truncation=True)
+        text_embeddings = self.text_embedder(**inputs).last_hidden_state
+        text_masks = inputs['attention_mask']
         B = min(x.shape[0], self.samples_to_test)
         latents = self._sample(
-            text_tokens=text_tokens,
+            text_tokens=text_embeddings,
             seq_len=self.opt.max_motion_length//4,
             latent_dim = 512,
             text_mask = text_masks,
             batch_size = x.shape[0]
         )
         x_recons = self.pretrained_movementdec(latents)
-        print('Reconstructed motion shape:', x_recons.shape, x.shape, text_tokens.shape)
-        ds_metrics = self._compute_dataset_metrics(x_recons, x, text_tokens)
+        print('Reconstructed motion shape:', x_recons.shape, x.shape, text_embeddings.shape)
+        ds_metrics = self._compute_dataset_metrics(x_recons, x, text_embeddings)
 
         # extract video
         if test_type == "val" or save_samples_test:
@@ -768,19 +776,19 @@ class DiffusionValidator:
     def _get_prompts_results_from_dit(self, prompts: List[str]):
         #x = batch_motion_parts[random_sample_idx].unsqueeze(0).float()
         random.shuffle(prompts)
-        text_tokens, text_masks = self.text_embedder.encode_tokens(
-            prompts
-        )
-        B = min(text_tokens.shape[0], self.samples_to_test)
+        inputs = self.text_tokenizer(prompts, return_tensors="pt", padding=True, truncation=True)
+        text_embeddings = self.text_embedder(**inputs).last_hidden_state
+        text_masks = inputs['attention_mask']
+        B = min(text_embeddings.shape[0], self.samples_to_test)
         latents = self._sample(
-            text_tokens=text_tokens[:B, ...],
+            text_tokens=text_embeddings[:B, ...],
             seq_len=self.opt.max_motion_length//4,
             latent_dim = 512,
             text_mask = text_masks[:B, ...],
             batch_size = B
         )
         x_recons = self.pretrained_movementdec(latents)
-        print('Reconstructed motion shape:', x_recons.shape, text_tokens.shape)
+        print('Reconstructed motion shape:', x_recons.shape, text_embeddings.shape)
 
         # extract video
         for i in range(B):
@@ -812,8 +820,6 @@ class DiffusionValidator:
     
     def validate_dataset(self, dataloader = None):
 
-        #self.vqvae.eval()
-        
         ds_metrics = {}
 
         if self.test_type in ['test', 'val'] and dataloader != None:
