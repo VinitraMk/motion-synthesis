@@ -13,6 +13,7 @@ class MotionDatasetV2(data.Dataset):
         joints_num = opt.joints_num
 
         self.data = []
+        self.motion_texts = []
         self.data_masks = []
         self.lengths = []
         id_list = []
@@ -25,6 +26,9 @@ class MotionDatasetV2(data.Dataset):
         for name in tqdm(id_list):
             try:
                 motion = np.load(pjoin(opt.motion_dir, name + '.npy'))
+                loaded_texts = self._load_texts(name)
+                self.motion_texts.extend(loaded_texts)
+                num_texts = len(loaded_texts)
                 if motion.shape[0] < opt.max_motion_length:
                     #print('motion shape: ', motion.shape[0], opt.max_motion_length)
                     orig_len = motion.shape[0]
@@ -38,9 +42,9 @@ class MotionDatasetV2(data.Dataset):
                     motion = motion[:opt.max_motion_length, :]
                     mask = np.zeros(opt.max_motion_length).astype(float)
                     mask[:orig_len] = 1.0
-                self.data.append(motion)
-                self.data_masks.append(mask)
-                self.loaded_ids.append(name)
+                self.data.extend([motion] * num_texts)
+                self.data_masks.extend([mask] * num_texts)
+                self.loaded_ids.extend([name] * num_texts)
             except Exception as e:
                 print('Dataset load exception: ', e)
                 # Some motion may not exist in KIT dataset
@@ -110,16 +114,16 @@ class MotionDatasetV2(data.Dataset):
         motion = (motion - self.mean) / self.std
 
         motion_file_id = self.loaded_ids[motion_id]
-        texts = self._load_texts(motion_file_id)
-        text = texts[0] if len(texts) > 0 else ""
+        #texts = self._load_texts(motion_file_id)
+        text = self.motion_texts[item]
+        #text = texts[0] if len(texts) > 0 else ""
         motion_mask = self.data_masks[motion_id]
 
         return {
             'motion': motion,
             'motion_mask': motion_mask,
             'file_id': motion_file_id,
-            'text': text,
-            'texts': texts
+            'text': text
         }
     
 
@@ -137,14 +141,14 @@ class MotionDatasetV2(data.Dataset):
         motion = (motion - self.mean) / self.std
 
         motion_file_id = self.loaded_ids[motion_id]
-        texts = self._load_texts(motion_file_id)
-        text = texts[0] if len(texts) > 0 else ""
+        #texts = self._load_texts(motion_file_id)
+        text = self.motion_texts[item]
+        #text = texts[0] if len(texts) > 0 else ""
 
         return {
             'motion': motion,
             'file_id': motion_file_id,
-            'text': text,
-            'texts': texts
+            'text': text
         }
     
 
