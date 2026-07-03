@@ -37,12 +37,20 @@ inference cost while preserving motion quality.
 
 ## Outputs So Far
 
-### Basic Diffusion pipeline inference results
+### Basic Diffusion pipeline validation results
 <br/>
-<img src="assets/dit_results/inference_test_clip_127.gif" alt="Alt text">
+<img src="assets/dit_results/val_M012296.gif" alt="Alt text">
 <br/>
 <br/>
-<img src="assets/dit_results/inference_test_clip_133.gif" alt="Alt text">
+<img src="assets/dit_results/val_M013093.gif" alt="Alt text">
+<br/>
+
+### Basic Diffusion pipeline fresh prompt results
+<br/>
+<img src="assets/dit_results/prompt_0.gif" alt="Alt text">
+<br/>
+<br/>
+<img src="assets/dit_results/prompt_1.gif" alt="Alt text">
 <br/>
 
 ## Interpretation of Current Results
