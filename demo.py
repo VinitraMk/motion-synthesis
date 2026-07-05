@@ -123,7 +123,7 @@ class MotionPipeline:
         text_embeddings= text_embeddings.to(self.device)
         if text_mask is not None:
             text_mask = text_mask.to(self.device)
-
+        print('text metrics', text_embeddings.mean().item(), text_embeddings.std().item())
         x = torch.randn(batch_size, seq_len, latent_dim, device=self.device)
         full_t = self.num_train_timesteps
         timesteps = np.linspace(0, full_t - 1, self.num_inference_steps)
@@ -142,38 +142,39 @@ class MotionPipeline:
         z2 = z1.clone()
 
         #cond = self.text_embedder.encode(prompt, convert_to_tensor = True, device = str(self.device)).clone()
-        text_tokens, text_mask = self.text_embedder.encode_tokens(["a person walking"])
-        text_tokens1, text_mask1 = self.text_embedder.encode_tokens(["a person jumping"])
+        inputs = self.text_tokenizer(["a person walking"], return_tensors="pt", padding="max_length", truncation=True)
+        inputs = {name: tensor.to(self.device) for name, tensor in inputs.items()}
+        text_embeddings = self.text_embedder(**inputs).last_hidden_state
+        text_mask = inputs['attention_mask']
+        inputs1 = self.text_tokenizer(["a person jumping"], return_tensors="pt", padding="max_length", truncation=True)
+        inputs1 = {name: tensor.to(self.device) for name, tensor in inputs1.items()}
+        text_embeddings1 = self.text_embedder(**inputs1).last_hidden_state
+        text_mask1 = inputs1['attention_mask']
+        #text_embeddings, text_mask = self.text_embedder.encode_tokens(["a person walking"])
+        #text_embeddings1, text_mask1 = self.text_embedder.encode_tokens(["a person jumping"])
         print(prompt, num_inference_steps)
-        print(text_tokens.mean().item(), text_tokens.std().item())
-        print(text_tokens1.mean().item(), text_tokens1.std().item())
+        print(text_embeddings.mean().item(), text_embeddings.std().item())
+        print(text_embeddings1.mean().item(), text_embeddings1.std().item())
 
-        for d_step in range(num_inference_steps):
-            t = torch.full((z1.shape[0], ), fill_value = d_step / (num_inference_steps - 1), device = self.device)
-            t = t.clamp(1e-4, 1.0)
-            d = torch.zeros(z1.shape[0], device=self.device)
-            alpha = 1.0 / num_inference_steps
+        latent = self._sample(
+            text_embeddings = text_embeddings,
+            seq_len=120//4,
+            latent_dim = 512,
+            text_mask = text_mask,
+            batch_size = 1
+        )
+        latent1 = self._sample(
+            text_embeddings = text_embeddings1,
+            seq_len=120//4,
+            latent_dim = 512,
+            text_mask = text_mask1,
+            batch_size = 1
+        )
+        print('latent stats: ', latent.mean(), latent.std(), latent.abs().max())
+        print('latent1 stats: ', latent1.mean(), latent1.std(), latent1.abs().max())
 
-            v1 = self.dit(z1, t, d, text_tokens, text_mask)
-            z1 = z1 + alpha * v1
-
-            block = self.dit.blocks[-1]
-            cross_out_1 = block.last_cross_out # shape [B, L_motion, dim]
-
-            v2 = self.dit(z2, t, d, text_tokens1, text_mask1)
-            z2 = z2 + alpha * v2
-
-            block = self.dit.blocks[-1]
-            cross_out_2 = block.last_cross_out # shape [B, L_motion, dim]
-
-            diff = (cross_out_1 - cross_out_2).abs().mean().item()
-            print("Mean |cross_out(text1) - cross_out(text2)|:", diff)
-
-            pred_diff = (v1 - v2).abs().mean().item()
-            print("Mean |pred(text1) - pred(text2)|:", pred_diff)
-
-        motion1 = self.decoder(z1)
-        motion2 = self.decoder(z2)
+        motion1 = self.decoder(latent)
+        motion2 = self.decoder(latent1)
         denormalized_motion1 = self.denormalize_motion(motion1[0])
         denormalized_motion2 = self.denormalize_motion(motion2[0])
 
@@ -257,6 +258,7 @@ def load_models(device, model_dir, meta_dir, max_motion_length = 40):
     dec.eval()
     text_encoder, text_tokenizer = get_pretrained_text_encoder(model = "clip_text", device = device)
     #text_encoder = TextTokenEncoder(device = device).to(device)
+    #text_tokenizer = None
     text_encoder.eval()
     dit_chkpt = torch.load(pjoin(model_dir, 'dit_stable_crossattn_full.tar'), map_location = device)
     dit = DiT(
@@ -351,7 +353,7 @@ def run_inference(pipe, prompt, num_steps, max_motion_len, seed, device, outputs
     gen = torch.Generator(device).manual_seed(seed)
     result = pipe(
         prompt=prompt,
-        max_motion_len = max_motion_len
+        max_motion_len = max_motion_len,
     )
 
     motion_joints = result
@@ -361,9 +363,10 @@ def run_inference(pipe, prompt, num_steps, max_motion_len, seed, device, outputs
         joints_recon=motion_joints,
         output_path_no_ext=pjoin(outputs_path, f'inference_test_clip_{file_id}'),
         clip_id=f'inference_test_clip_{file_id}',
-        text = prompt,
+        text = 'a person walking',
         recon_caption='Diffusion inference'
     )
+    
     
 def main():
     args = parse_args()
