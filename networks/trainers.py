@@ -1296,7 +1296,6 @@ class MotionDiTTrainer(object):
         self.dit.train()
         motions = batch_data['motion'].to(self.device).float()
         texts = batch_data['text']
-        print(batch_data['text'][1])
         motion_masks = batch_data['motion_mask'].to(self.device).float()
         stride = 4
         T_enc = motion_masks.shape[0] // stride

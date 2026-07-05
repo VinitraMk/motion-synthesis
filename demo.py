@@ -123,7 +123,6 @@ class MotionPipeline:
         text_embeddings= text_embeddings.to(self.device)
         if text_mask is not None:
             text_mask = text_mask.to(self.device)
-        print('text metrics', text_embeddings.mean().item(), text_embeddings.std().item())
         x = torch.randn(batch_size, seq_len, latent_dim, device=self.device)
         full_t = self.num_train_timesteps
         timesteps = np.linspace(0, full_t - 1, self.num_inference_steps)
@@ -219,10 +218,10 @@ class MotionPipeline:
         text_embeddings = self.text_embedder(**inputs).last_hidden_state
         text_mask = inputs['attention_mask']
         latent = self._sample(
-            text_embeddings = text_embeddings,
+            text_embeddings = text_embeddings.zero_(),
             seq_len=max_motion_len//4,
             latent_dim = latent_dim,
-            text_mask = text_mask,
+            text_mask = None,
             batch_size = batch_size
         )
         print('latent stats: ', latent.mean(), latent.std(), latent.abs().max())
@@ -363,7 +362,7 @@ def run_inference(pipe, prompt, num_steps, max_motion_len, seed, device, outputs
         joints_recon=motion_joints,
         output_path_no_ext=pjoin(outputs_path, f'inference_test_clip_{file_id}'),
         clip_id=f'inference_test_clip_{file_id}',
-        text = 'a person walking',
+        text = prompt,
         recon_caption='Diffusion inference'
     )
     
