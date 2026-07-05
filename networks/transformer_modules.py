@@ -14,7 +14,7 @@ import torch.nn as nn
 import numpy as np
 import math
 from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel, CLIPTextModel
 
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
@@ -80,8 +80,12 @@ class TextEmbedder(nn.Module):
 class TextTokenEncoder(nn.Module):
     def __init__(self, model_name = "sentence-transformers/all-MiniLM-L6-v2", device = "cuda"):
         super().__init__()
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name)
+        if model_name == "clip_text":
+            self.tokenizer = AutoTokenizer.from_pretrained("openai/clip-vit-large-patch14")
+            self.model = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14")
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            self.model = AutoModel.from_pretrained(model_name)
         self.device = torch.device(device)
         self.model.to(self.device)
         self.model.eval()

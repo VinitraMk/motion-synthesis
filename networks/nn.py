@@ -315,7 +315,7 @@ class DiT(nn.Module):
         d = self.d_embedder(d)                   # (N, C_latent)
         c = t + d                                # (N, C_latent)
 
-        text_ctx = self.encode_text_to_motion_space(text_embeddings)
+        text_ctx = self.text_proj(text_embeddings)
         text_ctx = text_ctx * self.text_cond_scale
         for block in self.blocks:
             x = block(x, c, text_ctx, text_mask) # (N, T, C_latent)

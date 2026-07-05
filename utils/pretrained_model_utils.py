@@ -3,7 +3,7 @@ from utils.paramUtils import DIMPOSE
 import torch
 from os.path import join as pjoin
 from sentence_transformers import SentenceTransformer
-from transformers import AutoTokenizer, AutoModel, CLIPModel, CLIPTextModelWithProjection, CLIPTextModel
+from transformers import AutoTokenizer, CLIPTextModel
 
 
 def get_pretrained_vae(model_dir):

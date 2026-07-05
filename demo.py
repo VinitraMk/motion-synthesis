@@ -19,7 +19,7 @@ except Exception:
     MATPLOTLIB_AVAILABLE = False
 
 class MotionPipeline:
-    def __init__(self, dit: DiT, text_embedder, text_tokenizer, decoder, device, meta_dir,
+    def __init__(self, dit: DiT, text_embedder, decoder, device, meta_dir,
         num_train_timesteps=1000,
         num_inference_steps = 1000,
         beta_start=1e-4,
@@ -28,7 +28,6 @@ class MotionPipeline:
         self.dit = dit
         self.dit.eval()
         self.text_embedder = text_embedder
-        self.text_tokenizer = text_tokenizer
         self.decoder = decoder
         self.device = device
         self.num_train_timesteps = num_train_timesteps
@@ -86,6 +85,7 @@ class MotionPipeline:
         d = torch.zeros_like(t_batch)
 
         model_pred = self.dit(x, t_batch, d, text_embeddings, text_mask)
+        last_cross_out = self.dit.blocks[-1].last_cross_out
 
         if self.prediction_type == "epsilon":
             betas_t = self._extract(self.betas, t_batch, x.shape)
@@ -110,67 +110,65 @@ class MotionPipeline:
             raise ValueError(f"Unsupported prediction_type: {self.prediction_type}")
 
         if t == 0:
-            return model_mean
+            return model_mean, last_cross_out
         else:
             posterior_variance_t = self._extract(self.posterior_variance, t_batch, x.shape)
             noise = torch.randn_like(x)
-            return model_mean + torch.sqrt(posterior_variance_t) * noise
+            return (model_mean + torch.sqrt(posterior_variance_t) * noise), last_cross_out
 
     @torch.no_grad()
-    def _sample(self, text_embeddings, seq_len, latent_dim, text_mask=None, batch_size=1):
+    def _sample(self, x, text_embeddings, seq_len, latent_dim, text_mask=None, batch_size=1):
         self.dit.eval()
 
         text_embeddings= text_embeddings.to(self.device)
         if text_mask is not None:
             text_mask = text_mask.to(self.device)
-        x = torch.randn(batch_size, seq_len, latent_dim, device=self.device)
+        #x = torch.randn(batch_size, seq_len, latent_dim, device=self.device)
         full_t = self.num_train_timesteps
         timesteps = np.linspace(0, full_t - 1, self.num_inference_steps)
         timesteps = list(np.round(timesteps).astype(int))
 
         for t in reversed(timesteps):
-            x = self._p_sample(x, t, text_embeddings, text_mask)
+            x, last_cross_out = self._p_sample(x, t, text_embeddings, text_mask)
 
-        return x
+        return x, last_cross_out
     
     @torch.no_grad()
-    def __calltest__(self, prompt, generator, num_inference_steps=50, seed=42, latent_shape=(1, 512), eta = 0.0):
+    def __call__(self, prompt, generator, num_inference_steps=50, seed=42, latent_shape=(1, 512), eta = 0.0):
         #generator = torch.Generator(device=self.device).manual_seed(seed)
 
         z1 = torch.randn(latent_shape, generator=generator, device=self.device)
         z2 = z1.clone()
 
         #cond = self.text_embedder.encode(prompt, convert_to_tensor = True, device = str(self.device)).clone()
-        inputs = self.text_tokenizer(["a person walking"], return_tensors="pt", padding="max_length", truncation=True)
-        inputs = {name: tensor.to(self.device) for name, tensor in inputs.items()}
-        text_embeddings = self.text_embedder(**inputs).last_hidden_state
-        text_mask = inputs['attention_mask']
-        inputs1 = self.text_tokenizer(["a person jumping"], return_tensors="pt", padding="max_length", truncation=True)
-        inputs1 = {name: tensor.to(self.device) for name, tensor in inputs1.items()}
-        text_embeddings1 = self.text_embedder(**inputs1).last_hidden_state
-        text_mask1 = inputs1['attention_mask']
-        #text_embeddings, text_mask = self.text_embedder.encode_tokens(["a person walking"])
-        #text_embeddings1, text_mask1 = self.text_embedder.encode_tokens(["a person jumping"])
+        text_embeddings, text_mask = self.text_embedder.encode_tokens(["a person walking"])
+        text_embeddings1, text_mask1 = self.text_embedder.encode_tokens(["a person jumping"])
         print(prompt, num_inference_steps)
         print(text_embeddings.mean().item(), text_embeddings.std().item())
         print(text_embeddings1.mean().item(), text_embeddings1.std().item())
-
-        latent = self._sample(
+        x = torch.randn(1, 30, 512, device=self.device)
+        print('init x stats: ', x.mean().item(), x.std().item())
+        latent, last_cross_out = self._sample(
+            x = x,
             text_embeddings = text_embeddings,
             seq_len=120//4,
             latent_dim = 512,
             text_mask = text_mask,
             batch_size = 1
         )
-        latent1 = self._sample(
+        latent1, last_cross_out1 = self._sample(
+            x = x,
             text_embeddings = text_embeddings1,
             seq_len=120//4,
             latent_dim = 512,
             text_mask = text_mask1,
             batch_size = 1
         )
-        print('latent stats: ', latent.mean(), latent.std(), latent.abs().max())
-        print('latent1 stats: ', latent1.mean(), latent1.std(), latent1.abs().max())
+        print("latent diff mean abs:", (latent - latent1).abs().mean().item())
+        print("latent diff max abs:",  (latent - latent1).abs().max().item())
+
+        print("cross_out diff mean abs:", (last_cross_out - last_cross_out1).abs().mean().item())
+        print("cross_out diff max abs:",  (last_cross_out - last_cross_out1).abs().max().item())
 
         motion1 = self.decoder(latent)
         motion2 = self.decoder(latent1)
@@ -212,16 +210,14 @@ class MotionPipeline:
         return motion_joints
     
     @torch.no_grad()
-    def __call__(self, prompt, max_motion_len, latent_dim = 512, batch_size = 1):
-        inputs = self.text_tokenizer([prompt], return_tensors="pt", padding="max_length", truncation=True)
-        inputs = {name: tensor.to(self.device) for name, tensor in inputs.items()}
-        text_embeddings = self.text_embedder(**inputs).last_hidden_state
-        text_mask = inputs['attention_mask']
+    def __calln__(self, prompt, max_motion_len, latent_dim = 512, batch_size = 1):
+        text_embeddings, text_mask = self.text_embedder.encode_tokens([prompt])
+        print('text stats: ', text_embeddings.mean().item(), text_embeddings.std().item())
         latent = self._sample(
-            text_embeddings = text_embeddings.zero_(),
+            text_embeddings = text_embeddings,
             seq_len=max_motion_len//4,
             latent_dim = latent_dim,
-            text_mask = None,
+            text_mask = text_mask,
             batch_size = batch_size
         )
         print('latent stats: ', latent.mean(), latent.std(), latent.abs().max())
@@ -255,9 +251,8 @@ def load_models(device, model_dir, meta_dir, max_motion_length = 40):
     enc, dec = get_pretrained_vae(model_dir=model_dir)
     enc.eval()
     dec.eval()
-    text_encoder, text_tokenizer = get_pretrained_text_encoder(model = "clip_text", device = device)
-    #text_encoder = TextTokenEncoder(device = device).to(device)
-    #text_tokenizer = None
+    #text_encoder, text_tokenizer = get_pretrained_text_encoder(model = "clip_text", device = device)
+    text_encoder = TextTokenEncoder(model_name = "clip_text", device = device).to(device)
     text_encoder.eval()
     dit_chkpt = torch.load(pjoin(model_dir, 'dit_stable_crossattn_full.tar'), map_location = device)
     dit = DiT(
@@ -270,10 +265,13 @@ def load_models(device, model_dir, meta_dir, max_motion_length = 40):
     dit.to(device)
     dit.eval()
 
+    print("text_proj weight mean abs:", dit.text_proj.weight.abs().mean().item())
+    print("to_k mean abs:", dit.blocks[0].cross_attn.to_k.weight.abs().mean().item())
+    print("to_v mean abs:", dit.blocks[0].cross_attn.to_v.weight.abs().mean().item())
+
     pipe = MotionPipeline(
         dit=dit,
         text_embedder=text_encoder,
-        text_tokenizer=text_tokenizer,
         decoder=dec,
         device=device,
         meta_dir=meta_dir
@@ -350,23 +348,38 @@ def run_inference(pipe, prompt, num_steps, max_motion_len, seed, device, outputs
     # Replace this call with your actual pipeline invocation
     #prompt = 'run'
     gen = torch.Generator(device).manual_seed(seed)
-    result = pipe(
-        prompt=prompt,
-        max_motion_len = max_motion_len,
+    #result = pipe(
+        #prompt=prompt,
+        #max_motion_len = max_motion_len,
+    #)
+    result1, result2 = pipe(
+        prompt = prompt,
+        generator = gen,
+        num_inference_steps = 1000
     )
 
-    motion_joints = result
+    motion_joints1 = result1
+    motion_joints2 = result2
     all_gif_files = [fname for fname in os.listdir(outputs_path) if ".gif" in fname]
     file_id = len(all_gif_files)
     render_skeleton_animation(
-        joints_recon=motion_joints,
+        joints_recon=motion_joints1,
         output_path_no_ext=pjoin(outputs_path, f'inference_test_clip_{file_id}'),
         clip_id=f'inference_test_clip_{file_id}',
-        text = prompt,
+        text = 'a person is walking',
         recon_caption='Diffusion inference'
     )
-    
-    
+    all_gif_files = [fname for fname in os.listdir(outputs_path) if ".gif" in fname]
+    file_id = len(all_gif_files)
+    render_skeleton_animation(
+        joints_recon=motion_joints2,
+        output_path_no_ext=pjoin(outputs_path, f'inference_test_clip_{file_id}_2'),
+        clip_id=f'inference_test_clip_{file_id}_2',
+        text = 'a person is jumping',
+        recon_caption='Diffusion inference'
+    )
+
+
 def main():
     args = parse_args()
     set_seed(args.seed)

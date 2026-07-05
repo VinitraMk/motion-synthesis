@@ -1120,8 +1120,7 @@ class MotionDiTTrainer(object):
         )
 
         self.vae = None
-        self.text_encoder, self.text_tokenizer = get_pretrained_text_encoder(model = 'clip_text', device = self.device)
-        #self.text_encoder = TextTokenEncoder(device = self.device).to(self.device)
+        self.text_encoder = TextTokenEncoder(model_name="sentence-transformers/all-MiniLM-L6-v2", device = self.device).to(self.device)
         self.text_encoder.eval()
 
         self.mean = np.load(pjoin(self.opt.meta_dir, 'mean.npy'))
@@ -1305,11 +1304,7 @@ class MotionDiTTrainer(object):
 
         with torch.no_grad():
             self.latents = self.encoder(motions[:, :, :-4])
-            #self.text_tokens, self.text_mask = self.text_encoder.encode_tokens(texts)
-            inputs = self.text_tokenizer(texts, return_tensors="pt", padding="max_length", truncation=True)
-            inputs = {name: tensor.to(self.device) for name, tensor in inputs.items()}
-            self.text_embeddings = self.text_encoder(**inputs).last_hidden_state
-            self.text_mask = inputs['attention_mask']
+            self.text_embeddings, self.text_mask = self.text_encoder.encode_tokens(texts)
 
         B = self.latents.shape[0]
         t = torch.randint(
