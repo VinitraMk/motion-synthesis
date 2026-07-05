@@ -8,7 +8,7 @@ from os.path import join as pjoin
 from torch.nn.utils import clip_grad_norm_
 from utils.utils import print_current_loss_decomp, cpu_deepcopy_state, move_state_to_device
 import matplotlib.pyplot as plt
-from networks.nn import MotionVQVAE, DiT
+from networks.nn import MotionVQVAE, DiT, MotionVAE
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from networks.autoencoder_modules import MovementConvEncoder, MovementConvDecoder
 from utils.pretrained_model_utils import get_pretrained_vae, get_pretrained_text_encoder
@@ -328,6 +328,241 @@ class MotionVQVAETrainer(object):
         )
         
         self.save_loss_data(history = history)
+
+class MotionVAETrainer(object):
+    def __init__(self, args, vae: MotionVAE):
+        self.opt = args
+        self.vae = vae
+        self.device = args.device
+
+        if args.is_train:
+            self.logger = Logger(args.log_dir)
+
+    @staticmethod
+    def zero_grad(opt_list):
+        for opt in opt_list:
+            opt.zero_grad()
+
+    @staticmethod
+    def clip_norm(network_list, max_norm=0.5):
+        for network in network_list:
+            clip_grad_norm_(network.parameters(), max_norm)
+
+    @staticmethod
+    def step(opt_list):
+        for opt in opt_list:
+            opt.step()
+
+    def save_loss_data(self, history):
+
+        os.makedirs(self.opt.experiment_dir, exist_ok=True)
+        epochs = range(1, len(history["train_loss"]) + 1)
+
+        loss_pairs = [
+            ("loss", "Total Loss"),
+            ("loss_rec", "Reconstruction Loss"),
+            ("loss_kl", "KL Loss"),
+        ]
+
+        for key, title in loss_pairs:
+            plt.figure(figsize=(8, 5))
+            plt.plot(epochs, history[f"train_{key}"], label=f"train_{key}")
+            plt.plot(epochs, history[f"val_{key}"], label=f"val_{key}")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.title(title)
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(pjoin(self.opt.experiment_dir, f"{key}.png"))
+            plt.close()
+
+        plt.figure(figsize=(10, 6))
+        for key, title in loss_pairs:
+            plt.plot(epochs, history[f"train_{key}"], label=f"train_{key}")
+            plt.plot(epochs, history[f"val_{key}"], linestyle="--", label=f"val_{key}")
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.title("All Losses")
+        plt.legend(fontsize=8, ncol=2)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(pjoin(self.opt.experiment_dir, "all_losses.png"))
+        plt.close()
+
+    def forward(self, batch_data):
+        motions = batch_data
+        self.motions = motions['motion'].detach().to(self.device).float()
+        motion_masks = batch_data['motion_mask'].to(self.device).float()
+
+        self.outputs = self.vae(self.motions, key_padding_mask=motion_masks)
+
+        self.recon_motions = self.outputs["x_recon"]
+        self.loss = self.outputs["loss"]
+        self.loss_rec = self.outputs["recon_loss"]
+        self.loss_kl = self.outputs["kl_loss"]
+
+    def update(self):
+        if torch.isnan(self.loss):
+            print("NaN loss before backward, skipping step")
+            return OrderedDict()
+        self.zero_grad([self.opt_vae])
+        self.loss.backward()
+        self.clip_norm([self.vae], 0.5)
+        self.step([self.opt_vae])
+        self.scheduler_vae.step()
+
+        loss_logs = OrderedDict()
+        loss_logs["loss"] = self.loss.item()
+        loss_logs["loss_rec"] = self.loss_rec.item()
+        loss_logs["loss_kl"] = self.loss_kl.item()
+        return loss_logs
+
+    def save(self, file_name, ep, total_it, history = None):
+        state = {
+            "vae": self.vae.state_dict(),
+            "opt_vae": self.opt_vae.state_dict(),
+            "scheduler_vae": self.scheduler_vae.state_dict(),
+            "ep": ep,
+            "total_it": total_it,
+            "history": history
+        }
+        torch.save(state, file_name)
+
+    def resume(self, model_dir):
+        checkpoint = torch.load(model_dir, map_location=self.device)
+        self.vae.load_state_dict(checkpoint["vae"])
+        self.opt_vae.load_state_dict(checkpoint["opt_vae"])
+        self.scheduler_vae.load_state_dict(checkpoint["scheduler_vae"])
+        return checkpoint["ep"], checkpoint["total_it"], checkpoint["history"]
+
+    def train(self, train_dataloader, val_dataloader, plot_eval = None):
+        self.vae.to(self.device)
+        self.opt_vae = optim.Adam(self.vae.parameters(), lr=self.opt.lr)
+        start_time = time.time()
+        total_iters = self.opt.max_epoch * len(train_dataloader)
+        self.scheduler_vae = CosineAnnealingLR(self.opt_vae, T_max = total_iters, eta_min = 1e-5)
+
+        history = {
+            "train_loss": [],
+            "train_loss_rec": [],
+            "train_loss_kl": [],
+            "val_loss": [],
+            "val_loss_rec": [],
+            "val_loss_kl": [],
+        }
+        
+        print("Number of epochs:", self.opt.max_epoch)
+
+        epoch = 0
+        it = 0
+        if self.opt.is_continue:
+            model_dir = pjoin(self.opt.model_dir, "latest.tar")
+            epoch, it, history = self.resume(model_dir)
+            print(f'Resuming training from previous checkpoint at epoch {epoch}')
+
+        print("Iters Per Epoch, Training: %04d, Validation: %03d" %
+              (len(train_dataloader), len(val_dataloader)))
+
+        val_loss = 0
+
+        # loss value init
+        train_loss_avg = 0
+        train_rec_avg = 0
+        train_kl_avg = 0
+        val_loss = 0
+        val_rec_loss = 0
+        val_kl_loss = 0
+
+        while epoch < self.opt.max_epoch:
+            train_loss_sum = 0.0
+            train_rec_sum = 0.0
+            train_kl_sum = 0.0
+            train_steps = 0
+            for i, batch_data in enumerate(train_dataloader):
+                self.vae.train()
+                self.forward(batch_data)
+                log_dict = self.update()
+
+                train_loss_sum += self.loss.item()
+                train_rec_sum += self.loss_rec.item()
+                train_kl_sum += self.loss_kl.item()
+                train_steps += 1
+
+                it += 1
+
+                if it % self.opt.save_latest == 0:
+                    self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = epoch, total_it = it, history = history)
+
+            #epoch += 1
+
+            train_loss_avg = train_loss_sum / max(train_steps, 1)
+            train_rec_avg = train_rec_sum / max(train_steps, 1)
+            train_kl_avg = train_kl_sum / max(train_steps, 1)
+
+            history["train_loss"].append(train_loss_avg)
+            history["train_loss_rec"].append(train_rec_avg)
+            history["train_loss_kl"].append(train_kl_avg)
+
+            #print("Validation time:")
+            val_loss = 0
+            val_rec_loss = 0
+            val_kl_loss = 0
+
+            with torch.no_grad():
+                self.vae.eval()
+                for i, batch_data in enumerate(val_dataloader):
+                    self.forward(batch_data)
+
+                    val_loss += self.loss.item()
+                    val_rec_loss += self.loss_rec.item()
+                    val_kl_loss += self.loss_kl.item()
+
+            denom = max(len(val_dataloader), 1)
+            val_loss /= denom
+            val_rec_loss /= denom
+            val_kl_loss /= denom
+
+            history["val_loss"].append(val_loss)
+            history["val_loss_rec"].append(val_rec_loss)
+            history["val_loss_kl"].append(val_kl_loss)
+            
+            
+            if epoch % self.opt.save_every_e == 0:
+                self.save(pjoin(self.opt.model_dir, "E%04d.tar" % epoch), epoch, total_it=it, history = history)
+
+            if epoch % self.opt.eval_every_e == 0:
+                print("Epoch:", epoch)
+                print(
+                    "Train Loss: %.5f Reconstruction Loss: %.5f "
+                    "KL Loss: %.5f"
+                    % (train_loss_avg, train_rec_avg, train_kl_avg)
+                )
+                print(
+                    "Validation Loss: %.5f Reconstruction Loss: %.5f "
+                    "KL Loss: %.5f"
+                    % (val_loss, val_rec_loss, val_kl_loss)
+                )
+                save_dir = pjoin(self.opt.eval_dir, "E%04d" % epoch)
+                os.makedirs(save_dir, exist_ok=True)
+                self.save_loss_data(history = history)
+            
+            epoch += 1
+
+        print("Epoch:", epoch)
+        print(
+            "Train Loss: %.5f Reconstruction Loss: %.5f "
+            "KL Loss: %.5f"
+            % (train_loss_avg, train_rec_avg, train_kl_avg)
+        )
+        print(
+            "Validation Loss: %.5f Reconstruction Loss: %.5f "
+            "KL Loss: %.5f"
+            % (val_loss, val_rec_loss, val_kl_loss)
+        )
+        
+        self.save_loss_data(history = history)
+
 
 
 class MotionShortcutDiTTrainer(object):

@@ -1,5 +1,5 @@
 from torch import nn
-from networks.autoencoder_modules import PartMovementConvDecoder, PartMovementConvEncoder, VectorQuantizer
+from networks.autoencoder_modules import PartMovementConvDecoder, PartMovementConvEncoder, VectorQuantizer, MovementEncoder, MovementDecoder
 from torch.nn import functional as F
 import torch
 from networks.transformer_modules import ScalarCondEmbedder, TextEmbedder, DiTBlock, FinalLayer, get_1d_sincos_pos_embed_from_grid
@@ -322,3 +322,76 @@ class DiT(nn.Module):
         x = self.final_layer(x, c)               # (N, T, D_latent)
         return x
 
+class MotionVAE(nn.Module):
+    def __init__(self, dim, hidden_size, max_seq_len = 10, num_heads = 6, depth = 9):
+        super().__init__()
+        self.encoder = MovementEncoder(
+            input_dim=dim,
+            hidden_size=hidden_size,
+            num_heads = num_heads,
+            depth = depth,
+            max_seq_len = max_seq_len
+        )
+        self.decoder = MovementDecoder(
+            input_dim = hidden_size,
+            out_dim = dim,
+            hidden_size=hidden_size,
+            num_heads = num_heads,
+            depth = depth,
+            max_seq_len = max_seq_len
+        )
+
+    def _build_4d_padding_mask(self, key_padding_mask = None):
+        # key_padding_mask shape: (B, T)
+        # Returns a 4D mask of shape (B, 1, T, T)
+        if key_padding_mask is None:
+            return None
+
+        valid = key_padding_mask.bool()
+        key_padding_mask_4d = valid[:, :, None] & valid[:, None, :] # [B, T, T]
+        key_padding_mask_4d = key_padding_mask_4d.unsqueeze(1)
+        return key_padding_mask_4d
+    
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+    
+    @torch.no_grad() 
+    def get_encoded_vector(self, x, key_padding_mask=None):
+        mu, logvar = self.encode(x, key_padding_mask = key_padding_mask)
+        return self.reparameterize(mu, logvar)
+
+    def encode(self, x, key_padding_mask=None):
+        return self.encoder(x, key_padding_mask=key_padding_mask)
+
+    def decode(self, z_e):
+        return self.decoder(z_e)
+
+    def forward(self, x, key_padding_mask=None, beta = 1e-2):
+        key_padding_mask_4d = self._build_4d_padding_mask(key_padding_mask=key_padding_mask)
+        mu, logvar = self.encode(x, key_padding_mask=key_padding_mask_4d)
+        z_e = self.reparameterize(mu, logvar)
+
+        kl_loss = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
+        kl_loss = kl_loss.sum(dim=-1).mean()
+        x_recon = self.decode(z_e)
+
+        if key_padding_mask is not None:
+            valid = key_padding_mask.float().unsqueeze(-1)   # [B, T, 1]
+            recon_l1 = (x - x_recon).abs() * valid
+            recon_loss = recon_l1.sum() / valid.sum().clamp(min=1.0)
+        else:
+            recon_loss = F.l1_loss(x_recon, x)
+
+        loss = recon_loss + beta * kl_loss
+
+        return {
+            "x_recon": x_recon,
+            "z_e": z_e,
+            "loss": loss,
+            "kl_loss": kl_loss,
+            "recon_loss": recon_loss,
+            "mu": mu,
+            "logvar": logvar
+        }
