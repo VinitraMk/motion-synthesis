@@ -96,6 +96,38 @@ class TextTokenEncoder(nn.Module):
         ).to(self.device)
         outputs = self.model(**inputs)
         return outputs.last_hidden_state, inputs.attention_mask
+    
+
+# transformer and attention blocks
+
+class TransformerBlock(nn.Module):
+    def __init__(self, dim, num_heads, dim_ff, context_dim = None, dropout = 0.1):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.mh_attn = Attention(dim, num_heads=num_heads, attn_drop=dropout, proj_drop=dropout, qkv_bias = True)
+        self.cross_attn = CrossAttention(dim, num_heads=num_heads, context_dim=context_dim, dropout=dropout)
+        self.norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, dim_ff),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim_ff, dim),
+            nn.Dropout(dropout)
+        )
+        self.norm3 = nn.LayerNorm(dim)
+
+    def forward(self, x, context = None, input_mask = None, context_mask = None):
+        if context != None:
+            attn_out = self.mh_attn(x, attn_mask = input_mask)
+            attn_out = self.norm1(x + attn_out)
+            cross_out = self.cross_attn(attn_out, context, mask = context_mask)
+            x = self.norm2(attn_out + cross_out)
+        else:
+            attn_out = self.mh_attn(x, attn_mask = input_mask)
+            x = self.norm1(x + attn_out)
+        ff_out = self.mlp(x)
+        x = self.norm3(x + ff_out)
+        return x
 
 class CrossAttention(nn.Module):
     def __init__(self, dim, num_heads = 8, context_dim = None, dropout = 0.1):
@@ -131,7 +163,7 @@ class CrossAttention(nn.Module):
         out = torch.matmul(attn_weights, v)
         out = out.transpose(1, 2).contiguous().view(B, N, C)
         return self.to_out(out)
-
+    
 
 #################################################################################
 #                                 Core DiT Model Block                          #
