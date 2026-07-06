@@ -79,12 +79,12 @@ class MotionPipeline:
         return out.view(t.shape[0], *((1,) * (len(x_shape) - 1)))
 
     @torch.no_grad()
-    def _p_sample(self, x, t, text_embeddings, text_mask=None):
+    def _p_sample(self, x, t, text_embeddings, text_unpooled_embeddings, text_mask=None):
         B = x.shape[0]
         t_batch = torch.full((B,), t, device=self.device, dtype=torch.long)
         d = torch.zeros_like(t_batch)
 
-        model_pred = self.dit(x, t_batch, d, text_embeddings, text_mask)
+        model_pred = self.dit(x, t_batch, d, text_embeddings, text_unpooled_embeddings, text_mask)
         last_cross_out = self.dit.blocks[-1].last_cross_out
 
         if self.prediction_type == "epsilon":
@@ -117,10 +117,11 @@ class MotionPipeline:
             return (model_mean + torch.sqrt(posterior_variance_t) * noise), last_cross_out
 
     @torch.no_grad()
-    def _sample(self, x, text_embeddings, seq_len, latent_dim, text_mask=None, batch_size=1):
+    def _sample(self, x, text_embeddings, text_unpooled_embeddings, seq_len, latent_dim, text_mask=None, batch_size=1):
         self.dit.eval()
 
         text_embeddings= text_embeddings.to(self.device)
+        text_unpooled_embeddings = text_unpooled_embeddings.to(self.device)
         if text_mask is not None:
             text_mask = text_mask.to(self.device)
         #x = torch.randn(batch_size, seq_len, latent_dim, device=self.device)
@@ -129,7 +130,7 @@ class MotionPipeline:
         timesteps = list(np.round(timesteps).astype(int))
 
         for t in reversed(timesteps):
-            x, last_cross_out = self._p_sample(x, t, text_embeddings, text_mask)
+            x, last_cross_out = self._p_sample(x, t, text_embeddings, text_unpooled_embeddings, text_mask)
 
         return x, last_cross_out
     
@@ -141,16 +142,17 @@ class MotionPipeline:
         z2 = z1.clone()
 
         #cond = self.text_embedder.encode(prompt, convert_to_tensor = True, device = str(self.device)).clone()
-        text_embeddings, text_mask = self.text_embedder.encode_tokens(["a person walking"])
-        text_embeddings1, text_mask1 = self.text_embedder.encode_tokens(["a person jumping"])
+        text_pooled_embeddings, text_unpooled_embeddings, text_mask = self.text_embedder.encode_tokens(["a person walking"])
+        text_pooled_embeddings1, text_unpooled_embeddings1, text_mask1 = self.text_embedder.encode_tokens(["a person jumping"])
         print(prompt, num_inference_steps)
-        print(text_embeddings.mean().item(), text_embeddings.std().item())
-        print(text_embeddings1.mean().item(), text_embeddings1.std().item())
+        print(text_pooled_embeddings.mean().item(), text_pooled_embeddings.std().item())
+        print(text_pooled_embeddings1.mean().item(), text_pooled_embeddings1.std().item())
         x = torch.randn(1, 30, 512, device=self.device)
         print('init x stats: ', x.mean().item(), x.std().item())
         latent, last_cross_out = self._sample(
             x = x,
-            text_embeddings = text_embeddings,
+            text_embeddings = text_pooled_embeddings,
+            text_unpooled_embeddings = text_unpooled_embeddings,
             seq_len=120//4,
             latent_dim = 512,
             text_mask = text_mask,
@@ -158,7 +160,8 @@ class MotionPipeline:
         )
         latent1, last_cross_out1 = self._sample(
             x = x,
-            text_embeddings = text_embeddings1,
+            text_embeddings = text_pooled_embeddings1,
+            text_unpooled_embeddings = text_unpooled_embeddings1,
             seq_len=120//4,
             latent_dim = 512,
             text_mask = text_mask1,
@@ -252,13 +255,13 @@ def load_models(device, model_dir, meta_dir, max_motion_length = 40):
     enc.eval()
     dec.eval()
     #text_encoder, text_tokenizer = get_pretrained_text_encoder(model = "clip_text", device = device)
-    text_encoder = TextTokenEncoder(model_name = "sentence-transformers/all-MiniLM-L6-v2", device = device).to(device)
+    text_encoder = TextTokenEncoder(model_name = "clip_text", device = device).to(device)
     text_encoder.eval()
-    dit_chkpt = torch.load(pjoin(model_dir, 'dit_stable_crossattn_debug_v1.tar'), map_location = device)
+    dit_chkpt = torch.load(pjoin(model_dir, 'dit_stable_crossattn_debug.tar'), map_location = device)
     dit = DiT(
         input_size = 512,
         hidden_size=1152,
-        text_dim=384,
+        text_dim=768,
         max_seq_len=max_motion_length//4
     )
     dit.load_state_dict(dit_chkpt['dit'])
