@@ -7,8 +7,8 @@ from utils.paramUtils import t2m_kinematic_chain
 import numpy as np
 from utils.word_vectorizer import WordVectorizer
 from torch.utils.data import DataLoader
-from data_utils.dataset import MotionDatasetV2
-from data_utils.dataset import PartMotionDatasetV2
+from data_utils.dataset import MotionDataset
+from data_utils.dataset import PartMotionDataset
 from networks.nn import MotionVQVAE, DiT
 from networks.trainers import MotionVQVAETrainer, MotionDiTTrainer
 from torch.utils.data import Subset
@@ -95,8 +95,8 @@ if __name__ == "__main__":
         val_dlen = 50 if options.dataset_mode == "micro" else 15
 
         subset_path = os.path.join(options.meta_dir, "micro_subsets.json")
-        par_train_dataset = PartMotionDatasetV2(options, mean, std, train_split_file)
-        par_val_dataset = PartMotionDatasetV2(options, mean, std, val_split_file)
+        par_train_dataset = PartMotionDataset(options, mean, std, train_split_file, w_vectorizer)
+        par_val_dataset = PartMotionDataset(options, mean, std, val_split_file, w_vectorizer)
 
         if os.path.exists(subset_path):
             with open(subset_path, "r") as f:
@@ -122,8 +122,8 @@ if __name__ == "__main__":
         train_dataset = Subset(par_train_dataset, micro_train_indices)
         val_dataset = Subset(par_val_dataset, micro_val_indices)
     else:
-        train_dataset = PartMotionDatasetV2(options, mean, std, train_split_file)
-        val_dataset = PartMotionDatasetV2(options, mean, std, val_split_file)
+        train_dataset = PartMotionDataset(options, mean, std, train_split_file, w_vectorizer)
+        val_dataset = PartMotionDataset(options, mean, std, val_split_file, w_vectorizer)
 
     print('\nTotal number of snippets in train: ', len(train_dataset))
     print('Total number of snippets in val: ', len(val_dataset))

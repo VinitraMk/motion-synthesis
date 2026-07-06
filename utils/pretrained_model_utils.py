@@ -30,7 +30,7 @@ def get_pretrained_vae(model_dir):
 
 def get_pretrained_text_encoder(model:str = 'sentence_transformer', device = torch.device("cpu")):
     if model == 'clip_text':
-        model_id = "openai/clip-vit-large-patch14"
+        model_id = "openai/clip-vit-large-patch16"
         tokenizer = AutoTokenizer.from_pretrained(model_id)
         text_encoder = CLIPTextModel.from_pretrained(model_id).to(device)
     else:

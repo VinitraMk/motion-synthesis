@@ -81,8 +81,8 @@ class TextTokenEncoder(nn.Module):
     def __init__(self, model_name = "sentence-transformers/all-MiniLM-L6-v2", device = "cuda"):
         super().__init__()
         if model_name == "clip_text":
-            self.tokenizer = AutoTokenizer.from_pretrained("openai/clip-vit-large-patch14")
-            self.model = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14")
+            self.tokenizer = AutoTokenizer.from_pretrained("openai/clip-vit-base-patch16")
+            self.model = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch16")
         else:
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
             self.model = AutoModel.from_pretrained(model_name)
@@ -99,7 +99,7 @@ class TextTokenEncoder(nn.Module):
             return_tensors = "pt"
         ).to(self.device)
         outputs = self.model(**inputs)
-        return outputs.last_hidden_state, inputs.attention_mask
+        return outputs.last_hidden_state, outputs.pooler_output, inputs.attention_mask
     
 
 # transformer and attention blocks

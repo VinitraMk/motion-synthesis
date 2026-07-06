@@ -6,18 +6,22 @@ import os
 from os.path import join as pjoin
 import json
 import torch.nn.functional as F
+import spacy
 
-class MotionDatasetV2(data.Dataset):
-    def __init__(self, opt, mean, std, split_file):
+class MotionDataset(data.Dataset):
+    def __init__(self, opt, mean, std, split_file, word_vectorizer):
         self.opt = opt
         joints_num = opt.joints_num
 
         self.data = []
         self.motion_texts = []
+        self.motion_text_tokens = []
         self.data_masks = []
         self.lengths = []
         id_list = []
         self.loaded_ids = []
+        self.word_vectorizer = word_vectorizer
+        self.nlp = spacy.load("en_core_web_sm")
         with cs.open(split_file, 'r') as f:
             for line in f.readlines():
                 id_list.append(line.strip())
@@ -27,7 +31,16 @@ class MotionDatasetV2(data.Dataset):
             try:
                 motion = np.load(pjoin(opt.motion_dir, name + '.npy'))
                 loaded_texts = self._load_texts(name)
+                loaded_tokens = []
+                for sntnc in loaded_texts:
+                    word_list, pos_list = self._process_text(sntnc)
+                    tokens = [
+                        "%s/%s" % (word_list[i], pos_list[i])
+                        for i in range(len(word_list))
+                    ]
+                    loaded_tokens.append(tokens)
                 self.motion_texts.extend(loaded_texts)
+                self.motion_text_tokens.extend(loaded_tokens)
                 num_texts = len(loaded_texts)
                 if motion.shape[0] < opt.max_motion_length:
                     #print('motion shape: ', motion.shape[0], opt.max_motion_length)
@@ -99,10 +112,51 @@ class MotionDatasetV2(data.Dataset):
         else:
             ValueError(f'Folder {self.opt.text_dir} not found under dataset folder')
         return texts
+    
+    def _process_text(self, sentence):
+        sentence = sentence.replace("-", "")
+        doc = self.nlp(sentence)
+        word_list = []
+        pos_list = []
+        for token in doc:
+            word = token.text
+            if not word.isalpha():
+                continue
+            if (token.pos_ == "NOUN"
+                    or token.pos_ == "VERB") and (word != "left"):
+                word_list.append(token.lemma_)
+            else:
+                word_list.append(word)
+            pos_list.append(token.pos_)
+        return word_list, pos_list
+    
+    def _vectorize_tokens(self, tokens, max_text_len: int = 20):
+        # wrap with sos/eos and pad/crop, exactly like MLD
+        if len(tokens) < max_text_len:
+            tokens = ["sos/OTHER"] + tokens + ["eos/OTHER"]
+            sent_len = len(tokens)                     # true length before padding
+            tokens = tokens + ["unk/OTHER"] * (max_text_len + 2 - sent_len)
+        else:
+            tokens = tokens[:max_text_len]
+            tokens = ["sos/OTHER"] + tokens + ["eos/OTHER"]
+            sent_len = len(tokens)                     # == max_text_len + 2
+
+        # build word_embeddings and pos_one_hots for model evaluation
+        word_emb_list = []
+        pos_oh_list = []
+        for tok in tokens:
+            word_emb, pos_oh = self.word_vectorizer[tok]
+            word_emb_list.append(word_emb[None, :])    # [1, word_dim]
+            pos_oh_list.append(pos_oh[None, :])        # [1, pos_dim]
+
+        word_embeddings = np.concatenate(word_emb_list, axis=0).astype(np.float32)  # [L, word_dim]
+        pos_one_hots   = np.concatenate(pos_oh_list, axis=0).astype(np.float32)     # [L, pos_dim]
+
+        return word_embeddings, pos_one_hots, sent_len, tokens
 
     def inv_transform(self, data):
         return data * self.std + self.mean
-
+    
     def __len__(self):
         #return self.cumsum[-1]
         return len(self.data)
@@ -116,6 +170,8 @@ class MotionDatasetV2(data.Dataset):
         motion_file_id = self.loaded_ids[motion_id]
         #texts = self._load_texts(motion_file_id)
         text = self.motion_texts[item]
+        tokens = self.motion_text_tokens[item]
+        word_embeddings, pos_one_hots, sent_len, tokens = self._vectorize_tokens(tokens)
         #text = texts[0] if len(texts) > 0 else ""
         motion_mask = self.data_masks[motion_id]
 
@@ -123,7 +179,11 @@ class MotionDatasetV2(data.Dataset):
             'motion': motion,
             'motion_mask': motion_mask,
             'file_id': motion_file_id,
-            'text': text
+            'text': text,
+            'word_embeddings': word_embeddings,
+            'pos_one_hots': pos_one_hots,
+            'sent_len': sent_len,
+            'tokens': tokens
         }
     
 
@@ -152,9 +212,9 @@ class MotionDatasetV2(data.Dataset):
         }
     
 
-class PartMotionDatasetV2(MotionDatasetV2):
-    def __init__(self, opt, mean, std, split_file):
-        super().__init__(opt, mean, std, split_file)
+class PartMotionDataset(MotionDataset):
+    def __init__(self, opt, mean, std, split_file, word_vectorizer):
+        super().__init__(opt, mean, std, split_file, word_vectorizer)
         self.joints_num = opt.joints_num
         assert self.joints_num == 22, "This version assumes HumanML3D with 22 joints."
 
@@ -246,5 +306,9 @@ class PartMotionDatasetV2(MotionDatasetV2):
             #"texts": motion_data['texts'],
             'file_id': motion_data['file_id'],
             'text': motion_data['text'],
-            'motion_mask': motion_data['motion_mask']
+            'motion_mask': motion_data['motion_mask'],
+            'word_embeddings': motion_data['word_embeddings'],
+            'pos_one_hots': motion_data['pos_one_hots'],
+            'sent_len': motion_data['sent_len'],
+            'tokens': motion_data['tokens']
         }

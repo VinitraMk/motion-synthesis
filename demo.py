@@ -252,13 +252,13 @@ def load_models(device, model_dir, meta_dir, max_motion_length = 40):
     enc.eval()
     dec.eval()
     #text_encoder, text_tokenizer = get_pretrained_text_encoder(model = "clip_text", device = device)
-    text_encoder = TextTokenEncoder(model_name = "clip_text", device = device).to(device)
+    text_encoder = TextTokenEncoder(model_name = "sentence-transformers/all-MiniLM-L6-v2", device = device).to(device)
     text_encoder.eval()
-    dit_chkpt = torch.load(pjoin(model_dir, 'dit_stable_crossattn_full.tar'), map_location = device)
+    dit_chkpt = torch.load(pjoin(model_dir, 'dit_stable_crossattn_debug_v1.tar'), map_location = device)
     dit = DiT(
         input_size = 512,
         hidden_size=1152,
-        text_dim=768,
+        text_dim=384,
         max_seq_len=max_motion_length//4
     )
     dit.load_state_dict(dit_chkpt['dit'])
@@ -373,8 +373,8 @@ def run_inference(pipe, prompt, num_steps, max_motion_len, seed, device, outputs
     file_id = len(all_gif_files)
     render_skeleton_animation(
         joints_recon=motion_joints2,
-        output_path_no_ext=pjoin(outputs_path, f'inference_test_clip_{file_id}_2'),
-        clip_id=f'inference_test_clip_{file_id}_2',
+        output_path_no_ext=pjoin(outputs_path, f'inference_test_clip_{file_id}'),
+        clip_id=f'inference_test_clip_{file_id}',
         text = 'a person is jumping',
         recon_caption='Diffusion inference'
     )

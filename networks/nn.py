@@ -242,6 +242,15 @@ class DiT(nn.Module):
             torch.zeros(1, max_seq_len, hidden_size), requires_grad = False
         )
 
+        # condition projection layers
+        self.text_pooled_proj = nn.Linear(input_size, hidden_size, bias = True)
+        self.text_unpooled_proj = nn.Linear(input_size, hidden_size, bias = True)
+        self.cond_fuse = nn.Sequential(
+            nn.Linear(hidden_size * 3, hidden_size),
+            nn.SiLU(),
+            nn.Linear(hidden_size, hidden_size)
+        )
+
         self.blocks = nn.ModuleList([
             DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
         ])
@@ -287,7 +296,8 @@ class DiT(nn.Module):
         with torch.no_grad():
             for block in self.blocks:
                 nn.init.constant_(block.cond_proj.bias, 0)
-                block.cond_proj.bias[5 * self.hidden_size: 6 * self.hidden_size].fill_(0.5)
+                nn.init.constant_(block.cond_proj.weight, 0)
+                #block.cond_proj.bias[5 * self.hidden_size: 6 * self.hidden_size].fill_(0.5)
 
         # Zero-out output layers:
         nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
@@ -300,26 +310,32 @@ class DiT(nn.Module):
     def encode_text_to_motion_space(self, text_embeddings):
         return self.text_proj(text_embeddings)
 
-    def forward(self, x, t, d, text_embeddings, text_mask = None):
+    def forward(self, x, t, d, text_pooled_embeddings, text_unpooled_embeddings, text_mask = None):
         """
         Forward pass of DiT.
         x: (N, T, C_latent) tensor of temporal inputs (latent representations of motion)
         t: (N,) tensor of diffusion timesteps
         d: (N,) tensor of diffusion steps
-        text_embeddings: (N, L_text, C_text) tensor of text embeddings
+        text_pooled_embeddings: (N, C_text) tensor of pooled text embeddings
+        text_unpooled_embeddings: (N, L_text, C_text) tensor of unpooled text embeddings
         text_mask: (N, L_text) tensor of text masks
         """
         #print('x shapes: ', x.size(), self.x_embedder(x).size(), self.pos_embed.size())
         x = self.x_embedder(x) + self.pos_embed  # (N, T, C_latent),
         t = self.t_embedder(t)                   # (N, C_latent)
         d = self.d_embedder(d)                   # (N, C_latent)
-        c = t + d                                # (N, C_latent)
 
-        text_ctx = self.text_proj(text_embeddings)
-        text_ctx = text_ctx * self.text_cond_scale
+        #text_ctx = self.text_proj(text_embeddings)
+        #text_global_ctx = text_pooled_embeddings * self.text_cond_scale
+        
+        #c = t + d + text_pooled_embeddings       # (N, C_latent)
+        text_pool_embed = self.text_pooled_proj(text_pooled_embeddings)
+        text_unpooled_embed = self.text_unpooled_proj(text_unpooled_embeddings)
+        c = torch.cat([t, d, text_pool_embed], dim=-1)
+        global_cond_fused = self.cond_fuse(c)
         for block in self.blocks:
-            x = block(x, c, text_ctx, text_mask) # (N, T, C_latent)
-        x = self.final_layer(x, c)               # (N, T, D_latent)
+            x = block(x, global_cond_fused, text_unpooled_embed, text_mask) # (N, T, C_latent)
+        x = self.final_layer(x, global_cond_fused)               # (N, T, D_latent)
         return x
 
 class MotionVAE(nn.Module):

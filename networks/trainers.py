@@ -1120,7 +1120,7 @@ class MotionDiTTrainer(object):
         )
 
         self.vae = None
-        self.text_encoder = TextTokenEncoder(model_name="sentence-transformers/all-MiniLM-L6-v2", device = self.device).to(self.device)
+        self.text_encoder = TextTokenEncoder(model_name="clip_text", device = self.device).to(self.device)
         self.text_encoder.eval()
 
         self.mean = np.load(pjoin(self.opt.meta_dir, 'mean.npy'))
@@ -1260,8 +1260,6 @@ class MotionDiTTrainer(object):
             ("loss", "Total Loss"),
             ("mse_loss", "MSE Loss"),
             ("pad_loss", "Padding Loss"),
-            #("contact_loss", "Contact Loss"),
-            #("pos_loss", "Position Loss"),
             ("root_vel_loss", "Root Velocity Loss")
         ]
 
@@ -1297,14 +1295,14 @@ class MotionDiTTrainer(object):
         texts = batch_data['text']
         motion_masks = batch_data['motion_mask'].to(self.device).float()
         stride = 4
-        T_enc = motion_masks.shape[0] // stride
         motion_masks_enc = motion_masks[:, ::stride].clone().float()
         #motion_masks = motion_masks.unsqueeze(-1)
         motion_masks_enc = motion_masks_enc.unsqueeze(-1)
 
         with torch.no_grad():
             self.latents = self.encoder(motions[:, :, :-4])
-            self.text_embeddings, self.text_mask = self.text_encoder.encode_tokens(texts)
+            self.text_unpooled_embeddings, self.text_pooled_embeddings, self.text_mask = self.text_encoder.encode_tokens(texts)
+            #print('text embeddings: ', self.text_pooled_embeddings.shape, self.text_unpooled_embeddings.shape, self.text_mask.shape)
 
         B = self.latents.shape[0]
         t = torch.randint(
@@ -1322,7 +1320,7 @@ class MotionDiTTrainer(object):
         # Check inputs to DiT
         if torch.isnan(x_t).any():
             print("NaN in xt")
-        if torch.isnan(self.text_embeddings).any():
+        if torch.isnan(self.text_pooled_embeddings).any():
             print("NaN in text_embeddings")
         if torch.isnan(self.target).any():
             print("NaN in target")
@@ -1331,7 +1329,8 @@ class MotionDiTTrainer(object):
             x_t,
             t,
             d,
-            self.text_embeddings,
+            self.text_pooled_embeddings,
+            self.text_unpooled_embeddings,
             text_mask = self.text_mask
         )
         # Check output of DiT and loss
