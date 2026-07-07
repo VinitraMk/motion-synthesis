@@ -394,13 +394,29 @@ class MotionVAETrainer(object):
         motions = batch_data
         self.motions = motions['motion'].detach().to(self.device).float()
         motion_masks = batch_data['motion_mask'].to(self.device).float()
+        additive_masks = (1 - motion_masks) * (-1e-5)
+        if torch.isnan(self.motions).any():
+            print("NaN in motions")
+        if torch.isnan(motion_masks).any():
+            print("NaN in motion_masks")
+        for row in motion_masks:
+            if row.sum() == 0:
+                print('entire clip pad is 0')
 
-        self.outputs = self.vae(self.motions, key_padding_mask=motion_masks)
+        self.outputs = self.vae(self.motions[:,:,:-4], key_padding_mask=additive_masks)
+        
+        
 
-        self.recon_motions = self.outputs["x_recon"]
+        self.recon_motions = self.outputs["x_recon"] * motion_masks
         self.loss = self.outputs["loss"]
         self.loss_rec = self.outputs["recon_loss"]
         self.loss_kl = self.outputs["kl_loss"]
+        
+        if torch.isnan(self.recon_motions).any():
+            print("NaN in pred")
+            
+        if torch.isnan(self.loss).any():
+            print("NaN in loss")
 
     def update(self):
         if torch.isnan(self.loss):

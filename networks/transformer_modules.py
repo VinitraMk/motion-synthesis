@@ -121,6 +121,7 @@ class TransformerBlock(nn.Module):
         self.norm3 = nn.LayerNorm(dim)
 
     def forward(self, x, context = None, input_mask = None, context_mask = None):
+        print('is input nan:', torch.isnan(x).any())
         if context != None:
             attn_out = self.mh_attn(x, attn_mask = input_mask)
             attn_out = self.norm1(x + attn_out)
@@ -128,7 +129,9 @@ class TransformerBlock(nn.Module):
             x = self.norm2(attn_out + cross_out)
         else:
             attn_out = self.mh_attn(x, attn_mask = input_mask)
+            print('attn_out isnan: ', torch.isnan(attn_out).any())
             x = self.norm1(x + attn_out)
+            print('attn_out isnan: ', torch.isnan(x).any())
         ff_out = self.mlp(x)
         x = self.norm3(x + ff_out)
         return x

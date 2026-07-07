@@ -8,4 +8,4 @@ exp_results/*
 log/*
 outputs/
 .vscode
-./*.tar
+*.tar

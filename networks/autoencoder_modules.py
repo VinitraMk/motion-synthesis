@@ -199,10 +199,15 @@ class MovementEncoder(nn.Module):
     def forward(self, x, key_padding_mask=None):
         # x shape: (B, T, D)
         x = self.embedding(x) + self.pos_embed
+        if torch.isnan(x).any():
+            print('NaN in x b4')
         for block in self.transformer_blocks:
             x = block(x, input_mask = key_padding_mask)
+            if torch.isnan(x).any():
+                print('NaN in x block')
         #x = self.norm(x)
         x_global = self.masked_mean_pool(x, key_padding_mask)
+        print('is x_global nan', torch.isnan(x_global).any())
         mu = self.fc_mu(x_global)
         logvar = self.fc_logvar(x_global)
         return mu, logvar
