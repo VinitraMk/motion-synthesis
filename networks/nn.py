@@ -291,7 +291,7 @@ class MotionVAE(nn.Module):
     def decode(self, z_e):
         return self.decoder(z_e)
 
-    def forward(self, x, key_padding_mask=None, beta = 1e-1):
+    def forward(self, x, key_padding_mask=None, beta = 1e-4):
         key_padding_mask_4d = self._build_4d_padding_mask(key_padding_mask=key_padding_mask)
         mu, logvar = self.encode(x, key_padding_mask=key_padding_mask_4d)
         #print("mu finite:", torch.isfinite(mu).all().item(), "max:", mu.abs().max().item())

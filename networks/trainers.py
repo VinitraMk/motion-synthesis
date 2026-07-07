@@ -403,7 +403,7 @@ class MotionVAETrainer(object):
         if torch.isnan(motion_masks).any():
             print("NaN in motion_masks")
 
-        self.outputs = self.vae(self.motions[:,:,:-4], key_padding_mask=motion_masks)
+        self.outputs = self.vae(self.motions[:,:,:-4], key_padding_mask=motion_masks, beta = beta_t)
         
         self.recon_motions = self.outputs["x_recon"]
         self.loss = self.outputs["loss"]
