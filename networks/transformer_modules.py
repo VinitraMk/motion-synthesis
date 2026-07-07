@@ -121,19 +121,22 @@ class TransformerBlock(nn.Module):
         self.norm3 = nn.LayerNorm(dim)
 
     def forward(self, x, context = None, input_mask = None, context_mask = None):
-        print('is input nan:', torch.isnan(x).any())
+        #print('is input nan:', torch.isnan(x).any())
         if context != None:
             attn_out = self.mh_attn(x, attn_mask = input_mask)
+            #print('context attn_out isnan: ', torch.isnan(attn_out).any())
             attn_out = self.norm1(x + attn_out)
             cross_out = self.cross_attn(attn_out, context, mask = context_mask)
             x = self.norm2(attn_out + cross_out)
         else:
             attn_out = self.mh_attn(x, attn_mask = input_mask)
-            print('attn_out isnan: ', torch.isnan(attn_out).any())
+            #print('attn_out isnan: ', torch.isnan(attn_out).any())
             x = self.norm1(x + attn_out)
-            print('attn_out isnan: ', torch.isnan(x).any())
+            #print('attn_out isnan: ', torch.isnan(x).any())
         ff_out = self.mlp(x)
+        #print('is mlp nan: ', torch.isnan(ff_out).any())
         x = self.norm3(x + ff_out)
+        #print('is mlp_norm nan: ', torch.isnan(x).any())
         return x
 
 class CrossAttention(nn.Module):

@@ -191,7 +191,8 @@ class MovementEncoder(nn.Module):
         # x shape: (B, T, D)
         # mask shape: (B, 1, T, T)
         #valid = (~mask).float()
-        token_mask = mask[:, 0].diagonal(dim1=-2, dim2=-1).float()
+        diag = mask[:, 0].diagonal(dim1=-2, dim2=-1).float()
+        token_mask = (diag == 0.0)
         token_mask = token_mask.unsqueeze(-1)
         x = x * token_mask
         return x.sum(dim=1) / (token_mask.sum(dim=1).clamp(min = 1.0))
@@ -199,17 +200,19 @@ class MovementEncoder(nn.Module):
     def forward(self, x, key_padding_mask=None):
         # x shape: (B, T, D)
         x = self.embedding(x) + self.pos_embed
-        if torch.isnan(x).any():
-            print('NaN in x b4')
+        #if torch.isnan(x).any():
+            #print('NaN in x b4')
         for block in self.transformer_blocks:
             x = block(x, input_mask = key_padding_mask)
-            if torch.isnan(x).any():
-                print('NaN in x block')
+            #if torch.isnan(x).any():
+                #print('NaN in x block')
         #x = self.norm(x)
+        #print('block finite: ', torch.isfinite(x).all().item(), "max:", x.abs().max().item())
         x_global = self.masked_mean_pool(x, key_padding_mask)
-        print('is x_global nan', torch.isnan(x_global).any())
+        #print('is x_global nan', torch.isnan(x_global).any(), torch.isfinite(x_global).all().item(), "max:", x_global.abs().max().item())
         mu = self.fc_mu(x_global)
         logvar = self.fc_logvar(x_global)
+        #print('is mu or logvar nan', torch.isnan(mu).any() or torch.isnan(logvar).any())
         return mu, logvar
     
 class MovementDecoder(nn.Module):
@@ -249,8 +252,12 @@ class MovementDecoder(nn.Module):
         # x shape: (B, D)
         B = x.shape[0]
         latent = self.embedding(x).unsqueeze(1)
+        #print('is latent in decoder nan', torch.isnan(latent).any())
+        #print('ze max and latent max', x.abs().max().item(), latent.abs().max().item())
         m0 = torch.zeros(B, self.max_seq_len, self.hidden_size, device=x.device, dtype = x.dtype)
+        #print('is m0 nan', torch.isnan(m0).any())
         x = m0 + self.pos_embed + latent
+        #print('is x + m0 nan', torch.isnan(x).any())
         for block in self.transformer_blocks:
             x = block(x, context = latent)
         x = self.norm(x)
