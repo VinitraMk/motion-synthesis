@@ -432,9 +432,9 @@ class MotionVAETrainer(object):
         loss_logs["loss_kl"] = self.loss_kl.item()
         return loss_logs
 
-    def save(self, file_name, ep, total_it, history = None):
+    def save(self, file_name, ep, total_it, history = None, best_model_state = None):
         state = {
-            "vae": self.vae.state_dict(),
+            "vae": self.vae.state_dict() if best_model_state == None else best_model_state,
             "opt_vae": self.opt_vae.state_dict(),
             "scheduler_vae": self.scheduler_vae.state_dict(),
             "ep": ep,
