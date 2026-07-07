@@ -1507,9 +1507,9 @@ class MotionDiTTrainer(object):
         val_root_vel_loss_avg = 0
         best_val = float("inf")
         best_state = None
-        patience = 10
+        patience = self.opt.patience
         epochs_without_improve = 0
-        min_delta = 1e-3
+        min_delta = self.opt.min_loss_delta
 
         while epoch < self.opt.max_epoch:
             
