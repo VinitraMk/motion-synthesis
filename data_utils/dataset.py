@@ -15,13 +15,13 @@ class MotionDataset(data.Dataset):
 
         self.data = []
         self.motion_texts = []
-        self.motion_text_tokens = []
         self.data_masks = []
         self.lengths = []
         id_list = []
         self.loaded_ids = []
         self.word_vectorizer = word_vectorizer
         self.nlp = spacy.load("en_core_web_sm")
+        self.word_embeddings = []
         with cs.open(split_file, 'r') as f:
             for line in f.readlines():
                 id_list.append(line.strip())
@@ -31,16 +31,22 @@ class MotionDataset(data.Dataset):
             try:
                 motion = np.load(pjoin(opt.motion_dir, name + '.npy'))
                 loaded_texts = self._load_texts(name)
-                loaded_tokens = []
+                loaded_embeddings = []
                 for sntnc in loaded_texts:
                     word_list, pos_list = self._process_text(sntnc)
                     tokens = [
                         "%s/%s" % (word_list[i], pos_list[i])
                         for i in range(len(word_list))
                     ]
-                    loaded_tokens.append(tokens)
+                    word_embeddings, pos_one_hots, sent_len, tokens = self._vectorize_tokens(tokens)
+                    loaded_embeddings.append({
+                        'word_embeddings': word_embeddings,
+                        'pos_one_hots': pos_one_hots,
+                        'sent_len': sent_len,
+                        'tokens': tokens
+                    })
                 self.motion_texts.extend(loaded_texts)
-                self.motion_text_tokens.extend(loaded_tokens)
+                self.word_embeddings.extend(loaded_embeddings)
                 num_texts = len(loaded_texts)
                 if motion.shape[0] < opt.max_motion_length:
                     #print('motion shape: ', motion.shape[0], opt.max_motion_length)
@@ -170,20 +176,20 @@ class MotionDataset(data.Dataset):
         motion_file_id = self.loaded_ids[motion_id]
         #texts = self._load_texts(motion_file_id)
         text = self.motion_texts[item]
-        tokens = self.motion_text_tokens[item]
-        word_embeddings, pos_one_hots, sent_len, tokens = self._vectorize_tokens(tokens)
+        #word_embeddings, pos_one_hots, sent_len, tokens = self._vectorize_tokens(tokens)
         #text = texts[0] if len(texts) > 0 else ""
         motion_mask = self.data_masks[motion_id]
+        word_embeddings = self.word_embeddings[item]
 
         return {
             'motion': motion,
             'motion_mask': motion_mask,
             'file_id': motion_file_id,
             'text': text,
-            'word_embeddings': word_embeddings,
-            'pos_one_hots': pos_one_hots,
-            'sent_len': sent_len,
-            'tokens': tokens
+            'word_embeddings': word_embeddings['word_embeddings'],
+            'pos_one_hots': word_embeddings['pos_one_hots'],
+            'sent_len': word_embeddings['sent_len'],
+            'tokens': word_embeddings['tokens']
         }
     
 
