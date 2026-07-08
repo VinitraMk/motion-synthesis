@@ -1,5 +1,5 @@
 from torch import nn
-from networks.autoencoder_modules import PartMovementConvDecoder, PartMovementConvEncoder, VectorQuantizer
+from networks.autoencoder_modules import PartMovementConvDecoder, PartMovementConvEncoder, VectorQuantizer, MovementEncoder, MovementDecoder
 from torch.nn import functional as F
 import torch
 from networks.transformer_modules import ScalarCondEmbedder, TextEmbedder, DiTBlock, FinalLayer, get_1d_sincos_pos_embed_from_grid
@@ -146,6 +146,15 @@ class DiT(nn.Module):
             torch.zeros(1, max_seq_len, hidden_size), requires_grad = False
         )
 
+        # condition projection layers
+        self.text_pooled_proj = nn.Linear(input_size, hidden_size, bias = True)
+        self.text_unpooled_proj = nn.Linear(input_size, hidden_size, bias = True)
+        self.cond_fuse = nn.Sequential(
+            nn.Linear(hidden_size * 3, hidden_size),
+            nn.SiLU(),
+            nn.Linear(hidden_size, hidden_size)
+        )
+
         self.blocks = nn.ModuleList([
             DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
         ])
@@ -191,7 +200,8 @@ class DiT(nn.Module):
         with torch.no_grad():
             for block in self.blocks:
                 nn.init.constant_(block.cond_proj.bias, 0)
-                block.cond_proj.bias[5 * self.hidden_size: 6 * self.hidden_size].fill_(0.5)
+                nn.init.constant_(block.cond_proj.weight, 0)
+                #block.cond_proj.bias[5 * self.hidden_size: 6 * self.hidden_size].fill_(0.5)
 
         # Zero-out output layers:
         nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
@@ -201,25 +211,119 @@ class DiT(nn.Module):
 
         self.text_cond_scale = 2.0
 
-    def forward(self, x, t, d, text_tokens, text_mask = None):
+    def encode_text_to_motion_space(self, text_embeddings):
+        return self.text_proj(text_embeddings)
+
+    def forward(self, x, t, d, text_pooled_embeddings, text_unpooled_embeddings, text_mask = None):
         """
         Forward pass of DiT.
         x: (N, T, C_latent) tensor of temporal inputs (latent representations of motion)
         t: (N,) tensor of diffusion timesteps
         d: (N,) tensor of diffusion steps
-        text_tokens: (N, L_text) tensor of text tokens
+        text_pooled_embeddings: (N, C_text) tensor of pooled text embeddings
+        text_unpooled_embeddings: (N, L_text, C_text) tensor of unpooled text embeddings
         text_mask: (N, L_text) tensor of text masks
         """
         #print('x shapes: ', x.size(), self.x_embedder(x).size(), self.pos_embed.size())
         x = self.x_embedder(x) + self.pos_embed  # (N, T, C_latent),
         t = self.t_embedder(t)                   # (N, C_latent)
         d = self.d_embedder(d)                   # (N, C_latent)
-        c = t + d                                # (N, C_latent)
 
-        text_ctx = self.text_proj(text_tokens)
-        text_ctx = text_ctx * self.text_cond_scale
+        #text_ctx = self.text_proj(text_embeddings)
+        #text_global_ctx = text_pooled_embeddings * self.text_cond_scale
+        
+        #c = t + d + text_pooled_embeddings       # (N, C_latent)
+        text_pool_embed = self.text_pooled_proj(text_pooled_embeddings)
+        text_unpooled_embed = self.text_unpooled_proj(text_unpooled_embeddings)
+        c = torch.cat([t, d, text_pool_embed], dim=-1)
+        global_cond_fused = self.cond_fuse(c)
         for block in self.blocks:
-            x = block(x, c, text_ctx, text_mask) # (N, T, C_latent)
-        x = self.final_layer(x, c)               # (N, T, D_latent)
+            x = block(x, global_cond_fused, text_unpooled_embed, text_mask) # (N, T, C_latent)
+        x = self.final_layer(x, global_cond_fused)               # (N, T, D_latent)
         return x
 
+class MotionVAE(nn.Module):
+    def __init__(self, dim, hidden_size, max_seq_len = 10, num_heads = 6, depth = 9):
+        super().__init__()
+        self.encoder = MovementEncoder(
+            input_dim=dim - 4,
+            hidden_size=hidden_size,
+            num_heads = num_heads,
+            depth = depth,
+            max_seq_len = max_seq_len
+        )
+        self.decoder = MovementDecoder(
+            input_dim = hidden_size,
+            out_dim = dim,
+            hidden_size=hidden_size,
+            num_heads = num_heads,
+            depth = depth,
+            max_seq_len = max_seq_len
+        )
+
+    def _build_4d_padding_mask(self, key_padding_mask = None):
+        # key_padding_mask shape: (B, T) boolean mask
+        # Returns a 4D mask of shape (B, 1, T, T) additive mask
+        if key_padding_mask is None:
+            return None
+
+        valid = key_padding_mask.bool()
+        valid = valid[:, :, None] & valid[:, None, :] # [B, T, T]
+
+        key_additive_padmask_4d = torch.zeros_like(valid, dtype=torch.float32)
+        key_additive_padmask_4d = key_additive_padmask_4d.masked_fill(~valid, -1e4)
+        key_additive_padmask_4d = key_additive_padmask_4d.unsqueeze(1) # [B, 1, T, T]
+        return key_additive_padmask_4d
+
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+    
+    @torch.no_grad() 
+    def get_encoded_vector(self, x, key_padding_mask=None):
+        mu, logvar = self.encode(x, key_padding_mask = key_padding_mask)
+        return self.reparameterize(mu, logvar)
+
+    def encode(self, x, key_padding_mask=None):
+        return self.encoder(x, key_padding_mask=key_padding_mask)
+
+    def decode(self, z_e):
+        return self.decoder(z_e)
+
+    def forward(self, x, key_padding_mask=None, beta = 1e-4):
+        key_padding_mask_4d = self._build_4d_padding_mask(key_padding_mask=key_padding_mask)
+        mu, logvar = self.encode(x, key_padding_mask=key_padding_mask_4d)
+        #print("mu finite:", torch.isfinite(mu).all().item(), "max:", mu.abs().max().item())
+        #print("logvar finite:", torch.isfinite(logvar).all().item(), "max:", logvar.abs().max().item())
+        z_e = self.reparameterize(mu, logvar)
+        #print('is z_e nan', torch.isnan(z_e).any())
+        #print("ze finite:", torch.isfinite(z_e).all().item(), "max:", z_e.abs().max().item())
+
+        kl_loss = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
+        kl_loss = kl_loss.sum(dim=-1).mean()
+        x_recon = self.decode(z_e)
+        if key_padding_mask is not None:
+            x_recon = x_recon * key_padding_mask.float().unsqueeze(-1)
+
+        if key_padding_mask is not None:
+            D = x.size(-1)
+            valid = key_padding_mask.float().unsqueeze(-1)   # [B, T, 1]
+            loss_mask = valid.expand(-1, -1, D)
+            recon_l1 = (x - x_recon[:,:,:-4]).abs() * loss_mask
+            recon_loss = recon_l1.sum() / loss_mask.sum().clamp(min=1.0)
+            #print('input shape', x.shape, x_recon.shape, loss_mask.sum(), recon_l1.sum(), recon_loss)
+        else:
+            recon_loss = F.l1_loss(x_recon[:,:,:-4], x)
+
+        loss = recon_loss + beta * kl_loss
+
+        return {
+            "x_recon": x_recon,
+            "z_e": z_e,
+            "loss": loss,
+            "kl_loss": kl_loss,
+            "recon_loss": recon_loss,
+            "mu": mu,
+            "logvar": logvar
+        }

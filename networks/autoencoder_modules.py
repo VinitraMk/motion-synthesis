@@ -2,6 +2,8 @@ from torch import nn
 from torch.nn import functional as F
 from utils.nn_utils import init_weight
 import torch
+import numpy as np
+from networks.transformer_modules import get_1d_sincos_pos_embed_from_grid, TransformerBlock
 
 # pick from EricGuo text-to-motion repo
 class MovementConvEncoder(nn.Module):
@@ -150,3 +152,115 @@ class VectorQuantizer(nn.Module):
         indices = indices.view(B, T_latent, P)
         return z_q, indices, vq_loss, codebook_loss, commitment_loss
 
+class MovementEncoder(nn.Module):
+    def __init__(self, input_dim,
+            hidden_size, # latent_dim
+            num_heads = 4, depth = 9, max_seq_len = 10):
+        super(MovementEncoder, self).__init__()
+        self.input_dim = input_dim
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.depth = depth
+        self.max_seq_len = max_seq_len
+
+        self.embedding = nn.Linear(input_dim, hidden_size)
+        self.pos_embed = nn.Parameter(torch.randn(1, max_seq_len, hidden_size), requires_grad=False)  # Assuming max sequence length of 100
+        self.transformer_blocks = nn.ModuleList([
+            TransformerBlock(hidden_size, num_heads, hidden_size * 4)
+            for _ in range(depth)
+        ])
+        self.norm = nn.LayerNorm(hidden_size)
+        self.fc_mu = nn.Linear(hidden_size, hidden_size)
+        self.fc_logvar = nn.Linear(hidden_size, hidden_size)
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        def _basic_init(module):
+            if isinstance(module, nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+        self.apply(_basic_init)
+
+        pos = np.arange(self.max_seq_len, dtype = np.float32)
+        pos_embed = get_1d_sincos_pos_embed_from_grid(self.hidden_size, pos)
+        self.pos_embed.data.copy_(torch.from_numpy(pos_embed).unsqueeze(0))
+
+    
+    def masked_mean_pool(self, x, mask):
+        # x shape: (B, T, D)
+        # mask shape: (B, 1, T, T)
+        #valid = (~mask).float()
+        diag = mask[:, 0].diagonal(dim1=-2, dim2=-1).float()
+        token_mask = (diag == 0.0)
+        token_mask = token_mask.unsqueeze(-1)
+        x = x * token_mask
+        return x.sum(dim=1) / (token_mask.sum(dim=1).clamp(min = 1.0))
+
+    def forward(self, x, key_padding_mask=None):
+        # x shape: (B, T, D)
+        x = self.embedding(x) + self.pos_embed
+        #if torch.isnan(x).any():
+            #print('NaN in x b4')
+        for block in self.transformer_blocks:
+            x = block(x, input_mask = key_padding_mask)
+            #if torch.isnan(x).any():
+                #print('NaN in x block')
+        #x = self.norm(x)
+        #print('block finite: ', torch.isfinite(x).all().item(), "max:", x.abs().max().item())
+        x_global = self.masked_mean_pool(x, key_padding_mask)
+        #print('is x_global nan', torch.isnan(x_global).any(), torch.isfinite(x_global).all().item(), "max:", x_global.abs().max().item())
+        mu = self.fc_mu(x_global)
+        logvar = self.fc_logvar(x_global)
+        #print('is mu or logvar nan', torch.isnan(mu).any() or torch.isnan(logvar).any())
+        return mu, logvar
+    
+class MovementDecoder(nn.Module):
+    def __init__(self, input_dim, # latent_dim 
+            hidden_size, out_dim, num_heads = 4, depth = 9, max_seq_len = 10):
+        super(MovementDecoder, self).__init__()
+        self.input_dim = input_dim
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.depth = depth
+        self.max_seq_len = max_seq_len
+
+        self.embedding = nn.Linear(hidden_size, hidden_size)
+        self.pos_embed = nn.Parameter(torch.randn(1, max_seq_len, hidden_size), requires_grad=False)  # Assuming max sequence length of 100
+        self.transformer_blocks = nn.ModuleList([
+            TransformerBlock(hidden_size, num_heads, hidden_size * 4, context_dim=input_dim)
+            for _ in range(depth)
+        ])
+        self.norm = nn.LayerNorm(hidden_size)
+        self.out_proj = nn.Linear(hidden_size, out_dim)
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        def _basic_init(module):
+            if isinstance(module, nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+        self.apply(_basic_init)
+
+        pos = np.arange(self.max_seq_len, dtype = np.float32)
+        pos_embed = get_1d_sincos_pos_embed_from_grid(self.hidden_size, pos)
+        self.pos_embed.data.copy_(torch.from_numpy(pos_embed))
+
+
+    def forward(self, x):
+        # x shape: (B, D)
+        B = x.shape[0]
+        latent = self.embedding(x).unsqueeze(1)
+        #print('is latent in decoder nan', torch.isnan(latent).any())
+        #print('ze max and latent max', x.abs().max().item(), latent.abs().max().item())
+        m0 = torch.zeros(B, self.max_seq_len, self.hidden_size, device=x.device, dtype = x.dtype)
+        #print('is m0 nan', torch.isnan(m0).any())
+        x = m0 + self.pos_embed + latent
+        #print('is x + m0 nan', torch.isnan(x).any())
+        for block in self.transformer_blocks:
+            x = block(x, context = latent)
+        x = self.norm(x)
+        x = self.out_proj(x)
+        return x
+    

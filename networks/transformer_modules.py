@@ -14,7 +14,7 @@ import torch.nn as nn
 import numpy as np
 import math
 from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel, CLIPTextModel
 
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
@@ -80,8 +80,12 @@ class TextEmbedder(nn.Module):
 class TextTokenEncoder(nn.Module):
     def __init__(self, model_name = "sentence-transformers/all-MiniLM-L6-v2", device = "cuda"):
         super().__init__()
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name)
+        if model_name == "clip_text":
+            self.tokenizer = AutoTokenizer.from_pretrained("openai/clip-vit-base-patch16")
+            self.model = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch16")
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            self.model = AutoModel.from_pretrained(model_name)
         self.device = torch.device(device)
         self.model.to(self.device)
         self.model.eval()
@@ -95,7 +99,45 @@ class TextTokenEncoder(nn.Module):
             return_tensors = "pt"
         ).to(self.device)
         outputs = self.model(**inputs)
-        return outputs.last_hidden_state, inputs.attention_mask
+        return outputs.last_hidden_state, outputs.pooler_output, inputs.attention_mask
+    
+
+# transformer and attention blocks
+
+class TransformerBlock(nn.Module):
+    def __init__(self, dim, num_heads, dim_ff, context_dim = None, dropout = 0.1):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.mh_attn = Attention(dim, num_heads=num_heads, attn_drop=dropout, proj_drop=dropout, qkv_bias = True)
+        self.cross_attn = CrossAttention(dim, num_heads=num_heads, context_dim=context_dim, dropout=dropout)
+        self.norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, dim_ff),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim_ff, dim),
+            nn.Dropout(dropout)
+        )
+        self.norm3 = nn.LayerNorm(dim)
+
+    def forward(self, x, context = None, input_mask = None, context_mask = None):
+        #print('is input nan:', torch.isnan(x).any())
+        if context != None:
+            attn_out = self.mh_attn(x, attn_mask = input_mask)
+            #print('context attn_out isnan: ', torch.isnan(attn_out).any())
+            attn_out = self.norm1(x + attn_out)
+            cross_out = self.cross_attn(attn_out, context, mask = context_mask)
+            x = self.norm2(attn_out + cross_out)
+        else:
+            attn_out = self.mh_attn(x, attn_mask = input_mask)
+            #print('attn_out isnan: ', torch.isnan(attn_out).any())
+            x = self.norm1(x + attn_out)
+            #print('attn_out isnan: ', torch.isnan(x).any())
+        ff_out = self.mlp(x)
+        #print('is mlp nan: ', torch.isnan(ff_out).any())
+        x = self.norm3(x + ff_out)
+        #print('is mlp_norm nan: ', torch.isnan(x).any())
+        return x
 
 class CrossAttention(nn.Module):
     def __init__(self, dim, num_heads = 8, context_dim = None, dropout = 0.1):
@@ -131,7 +173,7 @@ class CrossAttention(nn.Module):
         out = torch.matmul(attn_weights, v)
         out = out.transpose(1, 2).contiguous().view(B, N, C)
         return self.to_out(out)
-
+    
 
 #################################################################################
 #                                 Core DiT Model Block                          #

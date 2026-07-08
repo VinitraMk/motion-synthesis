@@ -476,15 +476,17 @@ class DiffusionValidator:
 
         self._init_pretrained_models()
         self._build_schedule(beta_start, beta_end, self.num_train_timesteps)
-        self.text_proj = torch.nn.Linear(384, 256)
-        self.motion_proj = torch.nn.Linear(263, 256)
+        self.text_proj = torch.nn.Linear(768, 512)
+        #self.motion_proj = torch.nn.Linear(263, 256)
         
 
     def _init_pretrained_models(self):
         self.pretrained_movementenc, self.pretrained_movementdec = get_pretrained_vae(self.opt.model_dir) 
         self.pretrained_movementenc.to(self.device)
         self.pretrained_movementdec.to(self.device)
-        self.text_embedder = TextTokenEncoder(device = self.device)
+
+        self.text_embedder = TextTokenEncoder(model_name='clip_text', device = self.device)
+        #self.text_embedder, self.text_tokenizer = get_pretrained_text_encoder(model = 'clip_text', device = self.device)
 
         self.text_embedder.eval()
         self.pretrained_movementenc.eval()
@@ -517,12 +519,12 @@ class DiffusionValidator:
         return out.view(t.shape[0], *((1,) * (len(x_shape) - 1)))
 
     @torch.no_grad()
-    def _p_sample(self, x, t, text_tokens, text_mask=None):
+    def _p_sample(self, x, t, text_pooled_embeddings, text_unpooled_embeddings, text_mask=None):
         B = x.shape[0]
         t_batch = torch.full((B,), t, device=self.device, dtype=torch.long)
         d = torch.zeros_like(t_batch)
 
-        model_pred = self.dit(x, t_batch, d, text_tokens, text_mask)
+        model_pred = self.dit(x, t_batch, d, text_pooled_embeddings, text_unpooled_embeddings, text_mask)
 
         if self.prediction_type == "epsilon":
             betas_t = self._extract(self.betas, t_batch, x.shape)
@@ -554,10 +556,11 @@ class DiffusionValidator:
             return model_mean + torch.sqrt(posterior_variance_t) * noise
 
     @torch.no_grad()
-    def _sample(self, text_tokens, seq_len, latent_dim, text_mask=None, batch_size=1):
+    def _sample(self, text_pooled_embeddings, text_unpooled_embeddings, seq_len, latent_dim, text_mask=None, batch_size=1):
         self.dit.eval()
 
-        text_tokens = text_tokens.to(self.device)
+        text_pooled_embeddings = text_pooled_embeddings.to(self.device)
+        text_unpooled_embeddings = text_unpooled_embeddings.to(self.device)
         if text_mask is not None:
             text_mask = text_mask.to(self.device)
 
@@ -567,7 +570,7 @@ class DiffusionValidator:
         timesteps = list(np.round(timesteps).astype(int))
 
         for t in reversed(timesteps):
-            x = self._p_sample(x, t, text_tokens, text_mask)
+            x = self._p_sample(x, t, text_pooled_embeddings, text_unpooled_embeddings, text_mask)
 
         return x
 
@@ -624,12 +627,14 @@ class DiffusionValidator:
         trace_gt = torch.trace(cov_gt_eps).item()
         fid = mean_term + trace_gen + trace_gt - (2.0 * trace_sqrt)
 
+        # TODO: skipping text-motion retrieval metrics for now 
+        '''
         # R-Precision: text-motion retrieval
         # cosine similarity between text_feats and motion_feats (generated)
-        t = torch.nn.functional.normalize(self.text_proj(text_feats), dim=-1)    # [N, 256]
-        m = torch.nn.functional.normalize(self.motion_proj(gen_feats), dim=-1) # [N, 256]
+        t = torch.nn.functional.normalize(self.dit.encode_text_to_motion_space(text_feats), dim=-1)    # [N, 512]
+        #m = torch.nn.functional.normalize(self.motion_proj(gen_feats), dim=-1) # [N, 512]
         text_norm = torch.nn.functional.normalize(t, dim=-1)
-        motion_norm = torch.nn.functional.normalize(m, dim=-1)
+        motion_norm = torch.nn.functional.normalize(gen_feats, dim=-1)
         sim = text_norm @ motion_norm.T  # [N, N]
 
         # For each text, rank motions
@@ -648,6 +653,7 @@ class DiffusionValidator:
         # MM-Dist: mean distance between matched text-motion embeddings
         # (using generated motion features)
         mm_dist = (1.0 - (text_norm * motion_norm.unsqueeze(1)).sum(dim=-1)).mean().item()
+        '''
 
         # Diversity: average L2 distance between random pairs of generated motion features
         if gen_feats.size(0) > 1:
@@ -661,10 +667,10 @@ class DiffusionValidator:
 
         return {
             "fid": fid,
-            "r_precision_top1": r1,
-            "r_precision_top2": r2,
-            "r_precision_top3": r3,
-            "mm_dist": mm_dist,
+            #"r_precision_top1": r1,
+            #"r_precision_top2": r2,
+            #"r_precision_top3": r3,
+            #"mm_dist": mm_dist,
             "diversity": diversity,
         }
 
@@ -710,22 +716,24 @@ class DiffusionValidator:
         return motion * self.std + self.mean
 
     @torch.no_grad()
-    def _get_result_from_dit(self, test_type: str, x: torch.Tensor, clip_ids: List[str], sample_texts: List[str], save_samples_test: bool = False):
+    def _get_result_from_dit(self, test_type: str, x: torch.Tensor, original_motion_lengths: torch.Tensor, clip_ids: List[str], sample_texts: List[str], save_samples_test: bool = False):
         #x = batch_motion_parts[random_sample_idx].unsqueeze(0).float()
-        text_tokens, text_masks = self.text_embedder.encode_tokens(
-            sample_texts
-        )
+        #text_tokens, text_masks = self.text_embedder.encode_tokens(
+            #sample_texts
+        #)
+        text_unpooled_embeddings, text_pooled_embeddings, text_mask = self.text_embedder.encode_tokens(sample_texts)
         B = min(x.shape[0], self.samples_to_test)
         latents = self._sample(
-            text_tokens=text_tokens,
+            text_pooled_embeddings=text_pooled_embeddings,
+            text_unpooled_embeddings=text_unpooled_embeddings,
             seq_len=self.opt.max_motion_length//4,
             latent_dim = 512,
-            text_mask = text_masks,
+            text_mask = text_mask,
             batch_size = x.shape[0]
         )
         x_recons = self.pretrained_movementdec(latents)
-        print('Reconstructed motion shape:', x_recons.shape, x.shape, text_tokens.shape)
-        ds_metrics = self._compute_dataset_metrics(x_recons, x, text_tokens)
+        print('Reconstructed motion shape:', x_recons.shape, x.shape, text_pooled_embeddings.shape)
+        ds_metrics = self._compute_dataset_metrics(x_recons, x, text_pooled_embeddings)
 
         # extract video
         if test_type == "val" or save_samples_test:
@@ -734,12 +742,13 @@ class DiffusionValidator:
                 recon_motion = x_recons[i]
                 clip_id = f'{test_type}_{clip_ids[i]}'
                 sample_text = sample_texts[i]
+                orig_len = original_motion_lengths[i]
                 try:
                     #full_motion_gt = self.motion_parts_to_full_motion(x.detach().cpu())
                     #print('full motion gt in vqvae: ', full_motion_gt[..., self.missing_parts_indices])
-                    full_motion_gt = self.denormalize_motion(gt_motion.detach().cpu().numpy())
+                    full_motion_gt = self.denormalize_motion(gt_motion[:orig_len].detach().cpu().numpy())
                     #full_motion_recon = self.motion_parts_to_full_motion(x_recon.detach().cpu())
-                    full_motion_recon = self.denormalize_motion(recon_motion.detach().cpu().numpy())
+                    full_motion_recon = self.denormalize_motion(recon_motion[:orig_len].detach().cpu().numpy())
 
                     joints_gt = recover_from_ric(torch.from_numpy(full_motion_gt).float(), self.joints_num)
                     joints_recon = recover_from_ric(torch.from_numpy(full_motion_recon).float(), self.joints_num)
@@ -768,19 +777,18 @@ class DiffusionValidator:
     def _get_prompts_results_from_dit(self, prompts: List[str]):
         #x = batch_motion_parts[random_sample_idx].unsqueeze(0).float()
         random.shuffle(prompts)
-        text_tokens, text_masks = self.text_embedder.encode_tokens(
-            prompts
-        )
-        B = min(text_tokens.shape[0], self.samples_to_test)
+        text_unpooled_embeddings, text_pooled_embeddings, text_mask = self.text_embedder.encode_tokens(prompts)
+        B = min(text_pooled_embeddings.shape[0], self.samples_to_test)
         latents = self._sample(
-            text_tokens=text_tokens[:B, ...],
+            text_pooled_embeddings=text_pooled_embeddings[:B, ...],
+            text_unpooled_embeddings=text_unpooled_embeddings[:B, ...],
             seq_len=self.opt.max_motion_length//4,
             latent_dim = 512,
-            text_mask = text_masks[:B, ...],
+            text_mask = text_mask[:B, ...],
             batch_size = B
         )
         x_recons = self.pretrained_movementdec(latents)
-        print('Reconstructed motion shape:', x_recons.shape, text_tokens.shape)
+        print('Reconstructed motion shape:', x_recons.shape, text_pooled_embeddings.shape)
 
         # extract video
         for i in range(B):
@@ -812,8 +820,6 @@ class DiffusionValidator:
     
     def validate_dataset(self, dataloader = None):
 
-        #self.vqvae.eval()
-        
         ds_metrics = {}
 
         if self.test_type in ['test', 'val'] and dataloader != None:
@@ -824,9 +830,9 @@ class DiffusionValidator:
 
                 if self.test_type == 'val' and bi == random_batch_idx:
                     batch = move_batch_to_device(batch, self.device)
-                    batch_motion_parts = batch['motion_parts'][:self.samples_to_test,...]
                     batch_motion = batch['motion'][:self.samples_to_test,...]
-                    batch_size = batch_motion_parts.size(0)
+                    original_motion_len = batch['original_motion_length'][:self.samples_to_test]
+                    batch_size = batch_motion.size(0)
 
                     batch_text = batch['text'][:self.samples_to_test]
                     #print('batch texts: ', batch_text)
@@ -838,6 +844,7 @@ class DiffusionValidator:
                     ds_metrics = self._get_result_from_dit(
                         test_type=self.test_type,
                         x = x_motion,
+                        original_motion_lengths = original_motion_len,
                         clip_ids=clip_ids,
                         sample_texts=batch_text
                     )

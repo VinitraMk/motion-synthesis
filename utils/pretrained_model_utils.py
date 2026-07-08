@@ -3,6 +3,7 @@ from utils.paramUtils import DIMPOSE
 import torch
 from os.path import join as pjoin
 from sentence_transformers import SentenceTransformer
+from transformers import AutoTokenizer, CLIPTextModel
 
 
 def get_pretrained_vae(model_dir):
@@ -27,11 +28,17 @@ def get_pretrained_vae(model_dir):
 
     return encoder, decoder
 
-def get_pretrained_text_encoder(device):
-    text_encoder = SentenceTransformer(
-        "sentence-transformers/all-MiniLM-L6-v2",
-        device = str(device)
-    )
-    text_encoder.eval()
+def get_pretrained_text_encoder(model:str = 'sentence_transformer', device = torch.device("cpu")):
+    if model == 'clip_text':
+        model_id = "openai/clip-vit-large-patch16"
+        tokenizer = AutoTokenizer.from_pretrained(model_id)
+        text_encoder = CLIPTextModel.from_pretrained(model_id).to(device)
+    else:
+        text_encoder = SentenceTransformer(
+            "sentence-transformers/all-MiniLM-L6-v2",
+            device = str(device)
+        )
+        text_encoder.eval()
+        tokenizer = None
 
-    return text_encoder
+    return text_encoder, tokenizer
