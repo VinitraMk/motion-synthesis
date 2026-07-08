@@ -135,20 +135,17 @@ class MotionPipeline:
         return x, last_cross_out
     
     @torch.no_grad()
-    def __call__(self, prompt, generator, num_inference_steps=50, seed=42, latent_shape=(1, 512), eta = 0.0):
+    def __call2__(self, prompt, num_inference_steps=50, seed=42, latent_shape=(1, 512), eta = 0.0):
         #generator = torch.Generator(device=self.device).manual_seed(seed)
 
-        z1 = torch.randn(latent_shape, generator=generator, device=self.device)
-        z2 = z1.clone()
-
-        #cond = self.text_embedder.encode(prompt, convert_to_tensor = True, device = str(self.device)).clone()
-        text_pooled_embeddings, text_unpooled_embeddings, text_mask = self.text_embedder.encode_tokens(["a person walking"])
-        text_pooled_embeddings1, text_unpooled_embeddings1, text_mask1 = self.text_embedder.encode_tokens(["a person jumping"])
+        text_unpooled_embeddings, text_pooled_embeddings, text_mask = self.text_embedder.encode_tokens(["a person is walking"])
+        text_unpooled_embeddings1, text_pooled_embeddings1, text_mask1 = self.text_embedder.encode_tokens(["a person is jumping"])
         print(prompt, num_inference_steps)
         print(text_pooled_embeddings.mean().item(), text_pooled_embeddings.std().item())
         print(text_pooled_embeddings1.mean().item(), text_pooled_embeddings1.std().item())
         x = torch.randn(1, 30, 512, device=self.device)
-        print('init x stats: ', x.mean().item(), x.std().item())
+        x1 = x.clone()
+        print('init x stats: ', x.mean().item(), x.std().item(), x.abs().max().item())
         latent, last_cross_out = self._sample(
             x = x,
             text_embeddings = text_pooled_embeddings,
@@ -159,7 +156,7 @@ class MotionPipeline:
             batch_size = 1
         )
         latent1, last_cross_out1 = self._sample(
-            x = x,
+            x = x1,
             text_embeddings = text_pooled_embeddings1,
             text_unpooled_embeddings = text_unpooled_embeddings1,
             seq_len=120//4,
@@ -213,11 +210,14 @@ class MotionPipeline:
         return motion_joints
     
     @torch.no_grad()
-    def __calln__(self, prompt, max_motion_len, latent_dim = 512, batch_size = 1):
-        text_embeddings, text_mask = self.text_embedder.encode_tokens([prompt])
-        print('text stats: ', text_embeddings.mean().item(), text_embeddings.std().item())
-        latent = self._sample(
-            text_embeddings = text_embeddings,
+    def __call__(self, prompt, max_motion_len, latent_dim = 512, batch_size = 1):
+        text_unpooled_embeddings, text_pooled_embeddings, text_mask = self.text_embedder.encode_tokens([prompt])
+        print('text stats: ', text_unpooled_embeddings.mean().item(), text_unpooled_embeddings.std().item())
+        x = torch.randn(batch_size, max_motion_len//4, latent_dim, device=self.device)
+        latent, last_cross_out = self._sample(
+            x = x,
+            text_embeddings = text_pooled_embeddings,
+            text_unpooled_embeddings=text_unpooled_embeddings,
             seq_len=max_motion_len//4,
             latent_dim = latent_dim,
             text_mask = text_mask,
@@ -257,7 +257,7 @@ def load_models(device, model_dir, meta_dir, max_motion_length = 40):
     #text_encoder, text_tokenizer = get_pretrained_text_encoder(model = "clip_text", device = device)
     text_encoder = TextTokenEncoder(model_name = "clip_text", device = device).to(device)
     text_encoder.eval()
-    dit_chkpt = torch.load(pjoin(model_dir, 'dit_stable_crossattn_debug.tar'), map_location = device)
+    dit_chkpt = torch.load(pjoin(model_dir, 'dit_stable_crossattn_full.tar'), map_location = device)
     dit = DiT(
         input_size = 512,
         hidden_size=1152,
@@ -351,10 +351,21 @@ def run_inference(pipe, prompt, num_steps, max_motion_len, seed, device, outputs
     # Replace this call with your actual pipeline invocation
     #prompt = 'run'
     gen = torch.Generator(device).manual_seed(seed)
-    #result = pipe(
-        #prompt=prompt,
-        #max_motion_len = max_motion_len,
-    #)
+    result = pipe(
+        prompt=prompt,
+        max_motion_len = max_motion_len,
+    )
+    motion_joints1 = result
+    all_gif_files = [fname for fname in os.listdir(outputs_path) if ".gif" in fname]
+    file_id = len(all_gif_files)
+    render_skeleton_animation(
+        joints_recon=motion_joints1,
+        output_path_no_ext=pjoin(outputs_path, f'inference_test_clip_{file_id}'),
+        clip_id=f'inference_test_clip_{file_id}',
+        text = prompt,
+        recon_caption='Diffusion inference'
+    )
+    '''
     result1, result2 = pipe(
         prompt = prompt,
         generator = gen,
@@ -381,6 +392,7 @@ def run_inference(pipe, prompt, num_steps, max_motion_len, seed, device, outputs
         text = 'a person is jumping',
         recon_caption='Diffusion inference'
     )
+    '''
 
 
 def main():

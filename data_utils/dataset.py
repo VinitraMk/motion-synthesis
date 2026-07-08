@@ -46,7 +46,7 @@ class MotionDataset(data.Dataset):
                         'tokens': tokens
                     })
                 self.motion_texts.extend(loaded_texts)
-                self.word_embeddings.extend(loaded_embeddings)
+                
                 num_texts = len(loaded_texts)
                 if motion.shape[0] < opt.max_motion_length:
                     #print('motion shape: ', motion.shape[0], opt.max_motion_length)
@@ -61,7 +61,9 @@ class MotionDataset(data.Dataset):
                     motion = motion[:opt.max_motion_length, :]
                     mask = np.zeros(opt.max_motion_length).astype(float)
                     mask[:orig_len] = 1.0
+                loaded_embeddings = [emb | {'original_motion_length': orig_len} for emb in loaded_embeddings]
                 self.data.extend([motion] * num_texts)
+                self.word_embeddings.extend(loaded_embeddings)
                 self.data_masks.extend([mask] * num_texts)
                 self.loaded_ids.extend([name] * num_texts)
             except Exception as e:
@@ -189,7 +191,8 @@ class MotionDataset(data.Dataset):
             'word_embeddings': word_embeddings['word_embeddings'],
             'pos_one_hots': word_embeddings['pos_one_hots'],
             'sent_len': word_embeddings['sent_len'],
-            'tokens': word_embeddings['tokens']
+            'tokens': word_embeddings['tokens'],
+            'original_motion_length': word_embeddings['original_motion_length']
         }
     
 
@@ -316,5 +319,6 @@ class PartMotionDataset(MotionDataset):
             'word_embeddings': motion_data['word_embeddings'],
             'pos_one_hots': motion_data['pos_one_hots'],
             'sent_len': motion_data['sent_len'],
-            'tokens': motion_data['tokens']
+            'tokens': motion_data['tokens'],
+            'original_motion_length': motion_data['original_motion_length']
         }

@@ -39,27 +39,28 @@ inference cost while preserving motion quality.
 
 ### Basic Diffusion pipeline validation results
 <br/>
-<img src="assets/dit_results/val_M012296.gif" alt="Alt text">
+<img src="assets/dit_results/val_M012718.gif" alt="Alt text">
 <br/>
 <br/>
-<img src="assets/dit_results/val_M013093.gif" alt="Alt text">
+<img src="assets/dit_results/val_013013.gif" alt="Alt text">
 <br/>
 
 ### Basic Diffusion pipeline fresh prompt results
 <br/>
-<img src="assets/dit_results/prompt_0.gif" alt="Alt text">
-<br/>
-<br/>
 <img src="assets/dit_results/prompt_1.gif" alt="Alt text">
+<br/>
+<br/>
+<img src="assets/dit_results/prompt_2.gif" alt="Alt text">
 <br/>
 
 ## Interpretation of Current Results
 
 ### Diffusion model
 The diffusion model is trained on the HumanML3D dataset with a transformer-based denoiser and currently serves as 
-the primary baseline for motion synthesis. It produces plausible motions for simple actions such as “walking”, 
-“jumping”, and “running”, but struggles to fully interpret complex text descriptions that combine multiple 
-actions or detailed spatial instructions. To improve temporal and contextual representation in latent space, 
+the primary baseline for motion synthesis. It also uses clip embeddings of the text prompt as a condition that guides 
+time-steps and also for cross attention. It generates plausible motions for simple motions and decent text alignment. In
+case of multiple action prompts, it shows alignment to one of the action (perhaps one that has been captured more in dataset 
+such as "walking"). To improve temporal and contextual representation in latent space, 
 ongoing experiments focus on a transformer-based VAE backbone, which is intended to better capture motion 
 structure across time and enable stronger alignment with nuanced text prompts.
 
