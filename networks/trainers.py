@@ -394,13 +394,16 @@ class MotionVAETrainer(object):
         motions = batch_data
         self.motions = motions['motion'].detach().to(self.device).float()
         motion_masks = batch_data['motion_mask'].to(self.device).float()
+        beta_max = self.opt.kl_beta_max
+        warmup_epoch = self.opt.kl_warmup_epoch
+        beta_t = min(beta_max, beta_max * (self.epoch / warmup_epoch))
         #additive_masks = (1 - motion_masks) * (-1e-5)
         if torch.isnan(self.motions).any():
             print("NaN in motions")
         if torch.isnan(motion_masks).any():
             print("NaN in motion_masks")
 
-        self.outputs = self.vae(self.motions[:,:,:-4], key_padding_mask=motion_masks)
+        self.outputs = self.vae(self.motions[:,:,:-4], key_padding_mask=motion_masks, beta = beta_t)
         
         self.recon_motions = self.outputs["x_recon"]
         self.loss = self.outputs["loss"]
@@ -429,9 +432,9 @@ class MotionVAETrainer(object):
         loss_logs["loss_kl"] = self.loss_kl.item()
         return loss_logs
 
-    def save(self, file_name, ep, total_it, history = None):
+    def save(self, file_name, ep, total_it, history = None, best_model_state = None):
         state = {
-            "vae": self.vae.state_dict(),
+            "vae": self.vae.state_dict() if best_model_state == None else best_model_state,
             "opt_vae": self.opt_vae.state_dict(),
             "scheduler_vae": self.scheduler_vae.state_dict(),
             "ep": ep,
@@ -465,12 +468,12 @@ class MotionVAETrainer(object):
         
         print("Number of epochs:", self.opt.max_epoch)
 
-        epoch = 0
+        self.epoch = 0
         it = 0
         if self.opt.is_continue:
             model_dir = pjoin(self.opt.model_dir, "latest.tar")
-            epoch, it, history = self.resume(model_dir)
-            print(f'Resuming training from previous checkpoint at epoch {epoch}')
+            self.epoch, it, history = self.resume(model_dir)
+            print(f'Resuming training from previous checkpoint at epoch {self.epoch}')
 
         print("Iters Per Epoch, Training: %04d, Validation: %03d" %
               (len(train_dataloader), len(val_dataloader)))
@@ -484,8 +487,13 @@ class MotionVAETrainer(object):
         val_loss = 0
         val_rec_loss = 0
         val_kl_loss = 0
+        patience = self.opt.patience
+        min_delta = self.opt.min_loss_delta
+        best_val = float('inf')
+        best_state = None
+        epochs_without_improve = 0
 
-        while epoch < self.opt.max_epoch:
+        while self.epoch < self.opt.max_epoch:
             train_loss_sum = 0.0
             train_rec_sum = 0.0
             train_kl_sum = 0.0
@@ -503,9 +511,9 @@ class MotionVAETrainer(object):
                 it += 1
 
                 if it % self.opt.save_latest == 0:
-                    self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = epoch, total_it = it, history = history)
+                    self.save(pjoin(self.opt.model_dir, "tmp.tar"), ep = self.epoch, total_it = it, history = history)
 
-            #epoch += 1
+            #self.epoch += 1
 
             train_loss_avg = train_loss_sum / max(train_steps, 1)
             train_rec_avg = train_rec_sum / max(train_steps, 1)
@@ -537,13 +545,35 @@ class MotionVAETrainer(object):
             history["val_loss"].append(val_loss)
             history["val_loss_rec"].append(val_rec_loss)
             history["val_loss_kl"].append(val_kl_loss)
-            
-            
-            if epoch % self.opt.save_every_e == 0:
-                self.save(pjoin(self.opt.model_dir, "E%04d.tar" % epoch), epoch, total_it=it, history = history)
 
-            if epoch % self.opt.eval_every_e == 0:
-                print("Epoch:", epoch)
+            if os.path.exists(pjoin(self.opt.model_dir, "tmp.tar")):
+                try:
+                    model_ckpt = torch.load(pjoin(self.opt.model_dir, "tmp.tar"), map_location="cpu")
+                    self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = self.epoch, total_it = it, history = history)
+                    del model_ckpt
+                except Exception as e:
+                    print(f"Failed to load checkpoint from {pjoin(self.opt.model_dir, 'tmp.tar')}. Skipping save to latest.tar. Error: {e}")
+                os.remove(pjoin(self.opt.model_dir, "tmp.tar")) # removing tar if latest stable is saved
+
+            if best_val - val_loss > min_delta:
+                best_val = val_loss
+                best_state = cpu_deepcopy_state(self.vae.state_dict())
+                epochs_without_improve = 0
+            else:
+                epochs_without_improve += 1
+
+            if epochs_without_improve >= patience:
+                print(f"Early stopping at epoch {self.epoch}, best val {best_val:.4f}")
+                self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = self.epoch, total_it=it, history = history, best_model_state=best_state)
+                self.save_loss_data(history = history)
+                break
+
+            
+            if self.epoch % self.opt.save_every_e == 0:
+                self.save(pjoin(self.opt.model_dir, "E%04d.tar" % self.epoch), self.epoch, total_it=it, history = history)
+
+            if self.epoch % self.opt.eval_every_e == 0:
+                print("Epoch:", self.epoch)
                 print(
                     "Train Loss: %.5f Reconstruction Loss: %.5f "
                     "KL Loss: %.5f"
@@ -554,13 +584,13 @@ class MotionVAETrainer(object):
                     "KL Loss: %.5f"
                     % (val_loss, val_rec_loss, val_kl_loss)
                 )
-                save_dir = pjoin(self.opt.eval_dir, "E%04d" % epoch)
+                save_dir = pjoin(self.opt.eval_dir, "E%04d" % self.epoch)
                 os.makedirs(save_dir, exist_ok=True)
                 self.save_loss_data(history = history)
             
-            epoch += 1
+            self.epoch += 1
 
-        print("Epoch:", epoch)
+        print("Epoch:", self.epoch)
         print(
             "Train Loss: %.5f Reconstruction Loss: %.5f "
             "KL Loss: %.5f"
@@ -932,9 +962,9 @@ class MotionShortcutDiTTrainer(object):
         val_contrastive_loss_avg = 0
         best_val = float("inf")
         best_state = None
-        patience = 10
+        patience = self.opt.patience
         epochs_without_improve = 0
-        min_delta = 1e-3
+        min_delta = self.opt.min_loss_delta
 
         while epoch < self.opt.max_epoch:
             
@@ -1477,9 +1507,9 @@ class MotionDiTTrainer(object):
         val_root_vel_loss_avg = 0
         best_val = float("inf")
         best_state = None
-        patience = 10
+        patience = self.opt.patience
         epochs_without_improve = 0
-        min_delta = 1e-3
+        min_delta = self.opt.min_loss_delta
 
         while epoch < self.opt.max_epoch:
             

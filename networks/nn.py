@@ -291,7 +291,7 @@ class MotionVAE(nn.Module):
     def decode(self, z_e):
         return self.decoder(z_e)
 
-    def forward(self, x, key_padding_mask=None, beta = 1e-1):
+    def forward(self, x, key_padding_mask=None, beta = 1e-4):
         key_padding_mask_4d = self._build_4d_padding_mask(key_padding_mask=key_padding_mask)
         mu, logvar = self.encode(x, key_padding_mask=key_padding_mask_4d)
         #print("mu finite:", torch.isfinite(mu).all().item(), "max:", mu.abs().max().item())
@@ -307,9 +307,12 @@ class MotionVAE(nn.Module):
             x_recon = x_recon * key_padding_mask.float().unsqueeze(-1)
 
         if key_padding_mask is not None:
+            D = x.size(-1)
             valid = key_padding_mask.float().unsqueeze(-1)   # [B, T, 1]
-            recon_l1 = (x - x_recon[:,:,:-4]).abs() * valid
-            recon_loss = recon_l1.sum() / valid.sum().clamp(min=1.0)
+            loss_mask = valid.expand(-1, -1, D)
+            recon_l1 = (x - x_recon[:,:,:-4]).abs() * loss_mask
+            recon_loss = recon_l1.sum() / loss_mask.sum().clamp(min=1.0)
+            #print('input shape', x.shape, x_recon.shape, loss_mask.sum(), recon_l1.sum(), recon_loss)
         else:
             recon_loss = F.l1_loss(x_recon[:,:,:-4], x)
 
