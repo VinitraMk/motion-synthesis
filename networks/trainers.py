@@ -506,6 +506,7 @@ class MotionVAETrainer(object):
                 train_loss_sum += self.loss.item()
                 train_rec_sum += self.loss_rec.item()
                 train_kl_sum += self.loss_kl.item()
+                #print(f"Epoch: {self.epoch}, Iter: {it}, Loss: {self.loss.item():.5f}, Rec Loss: {self.loss_rec.item():.5f}, KL Loss: {self.loss_kl.item():.5f}")
                 train_steps += 1
 
                 it += 1

@@ -303,15 +303,16 @@ class MotionVAE(nn.Module):
         kl_loss = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
         kl_loss = kl_loss.sum(dim=-1).mean()
         x_recon = self.decode(z_e)
-        if key_padding_mask is not None:
-            x_recon = x_recon * key_padding_mask.float().unsqueeze(-1)
 
         if key_padding_mask is not None:
             D = x.size(-1)
-            valid = key_padding_mask.float().unsqueeze(-1)   # [B, T, 1]
-            loss_mask = valid.expand(-1, -1, D)
-            recon_l1 = (x - x_recon[:,:,:-4]).abs() * loss_mask
-            recon_loss = recon_l1.sum() / loss_mask.sum().clamp(min=1.0)
+            abs_diff = torch.abs(x - x_recon[:,:,:-4])
+            error_per_frame = abs_diff.sum(dim=-1)  # Sum over the feature dimension - BxT
+            masked_error_per_frame = error_per_frame * key_padding_mask.float()
+
+            valid_frames_per_sample = key_padding_mask.sum(dim = -1).clamp(min = 1.0)
+            loss_per_sample = masked_error_per_frame.sum(dim = 1) / valid_frames_per_sample
+            recon_loss = loss_per_sample.mean()
             #print('input shape', x.shape, x_recon.shape, loss_mask.sum(), recon_l1.sum(), recon_loss)
         else:
             recon_loss = F.l1_loss(x_recon[:,:,:-4], x)
