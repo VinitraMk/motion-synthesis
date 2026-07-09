@@ -16,7 +16,7 @@ class TrainOptions():
         self.parser.add_argument('--dim_txt_hidden', type = int, default = 512, help = 'Dimension of hidden layer in text encoder')
         self.parser.add_argument('--feat_bias', type = int, default = 5, help = 'Layers of GRU')
         self.parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
-        self.parser.add_argument('--kl_warmup_epoch', type=int, default=30, help='Number of warmup epochs')
+        self.parser.add_argument('--kl_warmup_step', type=int, default=30, help='Number of warmup steps')
         self.parser.add_argument('--kl_beta_max', type=float, default=0.1, help='Maximum value of KL beta')
         self.parser.add_argument('--patience', type=int, default=15, help='Number of epochs to wait for improvement')
         self.parser.add_argument('--min_loss_delta', type=float, default=0.01, help='Delta difference for loss improvement')

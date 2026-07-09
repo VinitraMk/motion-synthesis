@@ -395,8 +395,8 @@ class MotionVAETrainer(object):
         self.motions = motions['motion'].detach().to(self.device).float()
         motion_masks = batch_data['motion_mask'].to(self.device).float()
         beta_max = self.opt.kl_beta_max
-        warmup_epoch = self.opt.kl_warmup_epoch
-        beta_t = min(beta_max, beta_max * (self.epoch / warmup_epoch))
+        warmup_step = self.opt.kl_warmup_step
+        beta_t = min(beta_max, beta_max * (self.it / warmup_step))
         #additive_masks = (1 - motion_masks) * (-1e-5)
         if torch.isnan(self.motions).any():
             print("NaN in motions")
@@ -469,10 +469,11 @@ class MotionVAETrainer(object):
         print("Number of epochs:", self.opt.max_epoch)
 
         self.epoch = 0
-        it = 0
+        self.it = 0
         if self.opt.is_continue:
             model_dir = pjoin(self.opt.model_dir, "latest.tar")
-            self.epoch, it, history = self.resume(model_dir)
+            self.epoch, _, history = self.resume(model_dir)
+            self.it = (self.epoch + 1) * len(train_dataloader)
             print(f'Resuming training from previous checkpoint at epoch {self.epoch}')
 
         print("Iters Per Epoch, Training: %04d, Validation: %03d" %
@@ -498,10 +499,9 @@ class MotionVAETrainer(object):
             train_rec_sum = 0.0
             train_kl_sum = 0.0
             train_steps = 0
-            for i, batch_data in enumerate(train_dataloader):
+            for _, batch_data in enumerate(train_dataloader):
                 self.vae.train()
                 self.forward(batch_data)
-                log_dict = self.update()
 
                 train_loss_sum += self.loss.item()
                 train_rec_sum += self.loss_rec.item()
@@ -509,12 +509,10 @@ class MotionVAETrainer(object):
                 #print(f"Epoch: {self.epoch}, Iter: {it}, Loss: {self.loss.item():.5f}, Rec Loss: {self.loss_rec.item():.5f}, KL Loss: {self.loss_kl.item():.5f}")
                 train_steps += 1
 
-                it += 1
+                self.it += 1
 
-                if it % self.opt.save_latest == 0:
-                    self.save(pjoin(self.opt.model_dir, "tmp.tar"), ep = self.epoch, total_it = it, history = history)
-
-            #self.epoch += 1
+                if self.it % self.opt.save_latest == 0:
+                    self.save(pjoin(self.opt.model_dir, "tmp.tar"), ep = self.epoch, total_it = self.it, history = history)
 
             train_loss_avg = train_loss_sum / max(train_steps, 1)
             train_rec_avg = train_rec_sum / max(train_steps, 1)
