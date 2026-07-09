@@ -18,6 +18,7 @@ class TrainOptions():
         self.parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
         self.parser.add_argument('--kl_warmup_step', type=int, default=30, help='Number of warmup steps')
         self.parser.add_argument('--kl_beta_max', type=float, default=0.1, help='Maximum value of KL beta')
+        self.parser.add_argument('--kl_beta_cycles', type=int, default=3, help='Number of cycles for KL beta scheduling')
         self.parser.add_argument('--patience', type=int, default=15, help='Number of epochs to wait for improvement')
         self.parser.add_argument('--min_loss_delta', type=float, default=0.01, help='Delta difference for loss improvement')
         self.parser.add_argument('--batch_size', type=int, default=128, help='Batch size')

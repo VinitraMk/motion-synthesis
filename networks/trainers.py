@@ -16,6 +16,7 @@ from networks.transformer_modules import TextTokenEncoder
 import numpy as np
 from data_utils.motion_processor import recover_from_ric
 import json
+from utils.nn_utils import CyclicBetaScheduler
 
 class Logger(object):
   def __init__(self, log_dir):
@@ -394,9 +395,8 @@ class MotionVAETrainer(object):
         motions = batch_data
         self.motions = motions['motion'].detach().to(self.device).float()
         motion_masks = batch_data['motion_mask'].to(self.device).float()
-        beta_max = self.opt.kl_beta_max
-        warmup_step = self.opt.kl_warmup_step
-        beta_t = min(beta_max, beta_max * (self.it / warmup_step))
+        
+        beta_t = self.scheduler_beta.get_beta()
         #additive_masks = (1 - motion_masks) * (-1e-5)
         if torch.isnan(self.motions).any():
             print("NaN in motions")
@@ -425,6 +425,7 @@ class MotionVAETrainer(object):
         self.clip_norm([self.vae], 0.5)
         self.step([self.opt_vae])
         self.scheduler_vae.step()
+        self.scheduler_beta.step()
 
         loss_logs = OrderedDict()
         loss_logs["loss"] = self.loss.item()
@@ -437,6 +438,7 @@ class MotionVAETrainer(object):
             "vae": self.vae.state_dict() if best_model_state == None else best_model_state,
             "opt_vae": self.opt_vae.state_dict(),
             "scheduler_vae": self.scheduler_vae.state_dict(),
+            "scheduler_beta": self.scheduler_beta.state_dict(),
             "ep": ep,
             "total_it": total_it,
             "history": history
@@ -448,6 +450,7 @@ class MotionVAETrainer(object):
         self.vae.load_state_dict(checkpoint["vae"])
         self.opt_vae.load_state_dict(checkpoint["opt_vae"])
         self.scheduler_vae.load_state_dict(checkpoint["scheduler_vae"])
+        self.scheduler_beta.load_state_dict(checkpoint["scheduler_beta"])
         return checkpoint["ep"], checkpoint["total_it"], checkpoint["history"]
 
     def train(self, train_dataloader, val_dataloader, plot_eval = None):
@@ -456,6 +459,12 @@ class MotionVAETrainer(object):
         start_time = time.time()
         total_iters = self.opt.max_epoch * len(train_dataloader)
         self.scheduler_vae = CosineAnnealingLR(self.opt_vae, T_max = total_iters, eta_min = 1e-5)
+        self.scheduler_beta = CyclicBetaScheduler(
+            total_steps=total_iters,
+            num_cycles=self.opt.kl_beta_cycles,
+            beta_max = self.opt.kl_beta_max,
+            schedule="linear"
+        )
 
         history = {
             "train_loss": [],
