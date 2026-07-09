@@ -529,7 +529,7 @@ class MotionVAETrainer(object):
 
             with torch.no_grad():
                 self.vae.eval()
-                for i, batch_data in enumerate(val_dataloader):
+                for _, batch_data in enumerate(val_dataloader):
                     self.forward(batch_data)
 
                     val_loss += self.loss.item()
@@ -548,7 +548,7 @@ class MotionVAETrainer(object):
             if os.path.exists(pjoin(self.opt.model_dir, "tmp.tar")):
                 try:
                     model_ckpt = torch.load(pjoin(self.opt.model_dir, "tmp.tar"), map_location="cpu")
-                    self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = self.epoch, total_it = it, history = history)
+                    self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = self.epoch, total_it = self.it, history = history)
                     del model_ckpt
                 except Exception as e:
                     print(f"Failed to load checkpoint from {pjoin(self.opt.model_dir, 'tmp.tar')}. Skipping save to latest.tar. Error: {e}")
@@ -563,13 +563,13 @@ class MotionVAETrainer(object):
 
             if epochs_without_improve >= patience:
                 print(f"Early stopping at epoch {self.epoch}, best val {best_val:.4f}")
-                self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = self.epoch, total_it=it, history = history, best_model_state=best_state)
+                self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = self.epoch, total_it=self.it, history = history, best_model_state=best_state)
                 self.save_loss_data(history = history)
                 break
 
             
             if self.epoch % self.opt.save_every_e == 0:
-                self.save(pjoin(self.opt.model_dir, "E%04d.tar" % self.epoch), self.epoch, total_it=it, history = history)
+                self.save(pjoin(self.opt.model_dir, "E%04d.tar" % self.epoch), self.epoch, total_it=self.it, history = history)
 
             if self.epoch % self.opt.eval_every_e == 0:
                 print("Epoch:", self.epoch)
