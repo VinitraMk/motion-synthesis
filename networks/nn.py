@@ -311,7 +311,7 @@ class MotionVAE(nn.Module):
             masked_error_per_frame = error_per_frame * key_padding_mask.float()
 
             valid_frames_per_sample = key_padding_mask.sum(dim = -1).clamp(min = 1.0)
-            loss_per_sample = masked_error_per_frame.sum(dim = 1) / valid_frames_per_sample
+            loss_per_sample = masked_error_per_frame.sum(dim = 1) / (valid_frames_per_sample * D)
             recon_loss = loss_per_sample.mean()
             #print('input shape', x.shape, x_recon.shape, loss_mask.sum(), recon_l1.sum(), recon_loss)
         else:
