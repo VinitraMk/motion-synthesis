@@ -248,19 +248,20 @@ class MovementDecoder(nn.Module):
         self.pos_embed.data.copy_(torch.from_numpy(pos_embed))
 
 
-    def forward(self, x):
+    def forward(self, x, is_autoregressive = False):
         # x shape: (B, D)
         B = x.shape[0]
         latent = self.embedding(x).unsqueeze(1)
         #print('is latent in decoder nan', torch.isnan(latent).any())
         #print('ze max and latent max', x.abs().max().item(), latent.abs().max().item())
-        m0 = torch.zeros(B, self.max_seq_len, self.hidden_size, device=x.device, dtype = x.dtype)
-        #print('is m0 nan', torch.isnan(m0).any())
-        x = m0 + self.pos_embed + latent
+        x = self.pos_embed + latent
+        #print('x shape after pos enc:', x.shape)
         #print('is x + m0 nan', torch.isnan(x).any())
         for block in self.transformer_blocks:
-            x = block(x, context = latent)
-        #x = self.norm(x)
+            if is_autoregressive:
+                x = block(x, latent)
+            else:
+                x = block(x)
         x = self.out_proj(x)
         return x
     

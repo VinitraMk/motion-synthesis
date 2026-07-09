@@ -297,6 +297,7 @@ class MotionVAE(nn.Module):
         #print("mu finite:", torch.isfinite(mu).all().item(), "max:", mu.abs().max().item())
         #print("logvar finite:", torch.isfinite(logvar).all().item(), "max:", logvar.abs().max().item())
         z_e = self.reparameterize(mu, logvar)
+        #print('z_e shape:', z_e.shape)
         #print('is z_e nan', torch.isnan(z_e).any())
         #print("ze finite:", torch.isfinite(z_e).all().item(), "max:", z_e.abs().max().item())
 
@@ -307,11 +308,11 @@ class MotionVAE(nn.Module):
         if key_padding_mask is not None:
             D = x.size(-1)
             abs_diff = torch.abs(x - x_recon[:,:,:-4])
-            error_per_frame = abs_diff.sum(dim=-1)  # Sum over the feature dimension - BxT
+            error_per_frame = abs_diff.sum(dim=-1) / D # Sum over the feature dimension - BxT
             masked_error_per_frame = error_per_frame * key_padding_mask.float()
 
             valid_frames_per_sample = key_padding_mask.sum(dim = -1).clamp(min = 1.0)
-            loss_per_sample = masked_error_per_frame.sum(dim = 1) / (valid_frames_per_sample * D)
+            loss_per_sample = masked_error_per_frame.sum(dim = 1) / valid_frames_per_sample # sum over time dimension - Bx1
             recon_loss = loss_per_sample.mean()
             #print('input shape', x.shape, x_recon.shape, loss_mask.sum(), recon_l1.sum(), recon_loss)
         else:

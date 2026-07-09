@@ -502,6 +502,7 @@ class MotionVAETrainer(object):
             for _, batch_data in enumerate(train_dataloader):
                 self.vae.train()
                 self.forward(batch_data)
+                self.update()
 
                 train_loss_sum += self.loss.item()
                 train_rec_sum += self.loss_rec.item()
@@ -559,7 +560,7 @@ class MotionVAETrainer(object):
                 best_state = cpu_deepcopy_state(self.vae.state_dict())
                 epochs_without_improve = 0
             else:
-                epochs_without_improve += 1
+                epochs_without_improve += 1 if self.it >= self.opt.kl_warmup_step else 0
 
             if epochs_without_improve >= patience:
                 print(f"Early stopping at epoch {self.epoch}, best val {best_val:.4f}")
