@@ -260,7 +260,7 @@ class MovementDecoder(nn.Module):
         #print('is x + m0 nan', torch.isnan(x).any())
         for block in self.transformer_blocks:
             x = block(x, context = latent)
-        x = self.norm(x)
+        #x = self.norm(x)
         x = self.out_proj(x)
         return x
     
