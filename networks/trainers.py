@@ -569,7 +569,7 @@ class MotionVAETrainer(object):
                 best_state = cpu_deepcopy_state(self.vae.state_dict())
                 epochs_without_improve = 0
             else:
-                epochs_without_improve += 1 if self.it >= self.opt.kl_warmup_step else 0
+                epochs_without_improve += 1
 
             if epochs_without_improve >= patience:
                 print(f"Early stopping at epoch {self.epoch}, best val {best_val:.4f}")
