@@ -19,16 +19,17 @@ from networks.transformer_modules import TextTokenEncoder
 
 # this will just validate whether latents from training/validation sample and close to those samples
 # reconstruct without errors
-class VQVAEValidator:
+class VAEValidator:
 
-    def __init__(self, opt, vqvae, train_dataloader, val_dataloader, samples_to_test: int = 5, video_dir_name: str = 'videos', tensors_dir_name: str = 'tensors', metrics_dir_name: str = 'metrics'):
+    def __init__(self, opt, vae_model, model_type: str, train_dataloader, val_dataloader, samples_to_test: int = 5, video_dir_name: str = 'videos', tensors_dir_name: str = 'tensors', metrics_dir_name: str = 'metrics'):
         self.opt = opt
-        self.vqvae = vqvae
-        self.vqvae.eval()
+        self.vae_model = vae_model
+        self.vae_model.eval()
         self.val_dataloader = val_dataloader
         self.train_dataloader = train_dataloader
         self.samples_to_test = samples_to_test
         self.sampling_seed = 42
+        self.model_type = model_type
 
         self.videos_dir = pjoin(opt.output_dir, f'{video_dir_name}')
         self.tensors_dir = pjoin(opt.output_dir, f'{tensors_dir_name}')
@@ -53,7 +54,7 @@ class VQVAEValidator:
             for k, v in mapping['part_feature_indices'].items()
         }
         self.motion_dim = self.mean.shape[0]
-        self.pretrained_movementenc, self.pretrained_movementdec = get_pretrained_vae(self.opt.checkpoints_dir) 
+        self.pretrained_movementenc, self.pretrained_movementdec = get_pretrained_vae(self.opt.model_dir) 
         self.pretrained_movementenc.to(self.device)
         self.pretrained_movementdec.to(self.device)
 
@@ -113,9 +114,9 @@ class VQVAEValidator:
     def denormalize_motion(self, motion):
         return motion * self.std + self.mean
 
-    def _get_result_from_vqvae(self, x: torch.Tensor, clip_id: str, sample_id: str, sample_text: str, full_text: str = "", recon_caption: str = "", x_baseline: torch.Tensor = None):
+    def _get_result_from_vae(self, x: torch.Tensor, clip_id: str, sample_id: str, sample_text: str, x_baseline: torch.Tensor = None, motion_masks: torch.Tensor = None):
         #x = batch_motion_parts[random_sample_idx].unsqueeze(0).float()
-        out = self.vqvae.forward(x)
+        out = self.vae_model.forward(x[...,:-4], motion_masks)
         x_recon = out['x_recon']
         metrics = self._compute_metrics(x, x_recon)
         base_matrics = {}
@@ -144,10 +145,6 @@ class VQVAEValidator:
             'base_max_abs': base_matrics.get('max_abs', None),
             'recon_loss_model': out['recon_loss'].item(),
             'total_loss_model': out['loss'].item(),
-            'vq_loss_model': out['vq_loss'].item(),
-            'codebook_loss_model': out['codebook_loss'].item(),
-            'commitment_loss_model': out['commitment_loss'].item(),
-            'full_text': full_text,
             'sample_text': sample_text
         }
 
@@ -163,11 +160,17 @@ class VQVAEValidator:
         # extract video
 
         try:
-            full_motion_gt = self.motion_parts_to_full_motion(x.detach().cpu())
+            if self.model_type == "vqvae":
+                full_motion_gt = self.motion_parts_to_full_motion(x.detach().cpu())
+                full_motion_recon = self.motion_parts_to_full_motion(x_recon.detach().cpu())
+            else:
+                full_motion_gt = x.detach().cpu().numpy()
+                full_motion_recon = x_recon.detach().cpu().numpy()
+
             #print('full motion gt in vqvae: ', full_motion_gt[..., self.missing_parts_indices])
-            full_motion_gt = self.denormalize_motion(full_motion_gt)
-            full_motion_recon = self.motion_parts_to_full_motion(x_recon.detach().cpu())
-            full_motion_recon = self.denormalize_motion(full_motion_recon)
+            full_motion_gt = self.denormalize_motion(full_motion_gt[0])
+            print("full motion recon: ", full_motion_recon.shape)
+            full_motion_recon = self.denormalize_motion(full_motion_recon[0])
 
             joints_gt = recover_from_ric(torch.from_numpy(full_motion_gt).float(), self.joints_num)
             joints_recon = recover_from_ric(torch.from_numpy(full_motion_recon).float(), self.joints_num)
@@ -188,7 +191,7 @@ class VQVAEValidator:
                     clip_id = sample_id,
                     joints_baseline=joints_baseline,
                     text = sample_text,
-                    fps=20,
+                    fps=120,
                     save_mp4=True
                 )
                 if video_path != "" or video_path != None:
@@ -215,11 +218,14 @@ class VQVAEValidator:
 
             if bi in batch_indices: 
                 batch = move_batch_to_device(batch, self.device)
-                batch_motion_parts = batch['motion_parts']
-                batch_motion = batch['motion']
-                batch_size = batch_motion_parts.size(0)
+                if self.model_type == "vqvae":
+                    batch_motion = batch['motion_parts']
+                else:
+                    batch_motion = batch['motion']
+                batch_size = batch_motion.size(0)
 
                 batch_text = batch['text']
+                motion_masks = batch['motion_mask']
                 #print('batch texts: ', batch_text)
                 clip_ids = batch['file_id']
                 random_sample_idx = rng.sample(range(batch_size), 1)[0]
@@ -229,16 +235,15 @@ class VQVAEValidator:
                 #rng = random.Random(100)
                 #print('batch length: ', batch_size, len(self.val_dataloader.dataset))
                 #sample_indices = rng.sample(range(batch_size), 10)
-                x = batch_motion_parts[random_sample_idx].unsqueeze(0).float()
+                #x = batch_motion_parts[random_sample_idx].unsqueeze(0).float()
                 x_motion = batch_motion[random_sample_idx].unsqueeze(0).float()
-                row = self._get_result_from_vqvae(
-                    x = x,
+                x_mask = motion_masks[random_sample_idx].unsqueeze(0).float()
+                row = self._get_result_from_vae(
+                    x = x_motion,
                     clip_id = clip_ids[random_sample_idx],
                     sample_id = sample_id,
                     sample_text = batch_text[random_sample_idx],
-                    full_text = batch_text[random_sample_idx],
-                    recon_caption='Part-Aware VQVAE',
-                    x_baseline=x_motion
+                    motion_masks = x_mask
                 )
                 
                 rows.append(row)
@@ -327,28 +332,34 @@ class VQVAEValidator:
         for si in range(self.samples_to_test):
             x = data_interpolated_samples['motion_parts'][si]
             x_motion = data_interpolated_samples['motions'][si]
-            row = self._get_result_from_vqvae(
+            row = self._get_result_from_vae(
                 x = x,
                 clip_id=clip_id,
                 sample_id=f"data_interpolated_{clip_id}_{si}",
                 sample_text=f"Interpolated sample {si} (data space)",
-                full_text=f"Interpolation of - {interpolated_samples['text_a']} : {interpolated_samples['text_b']}",
-                recon_caption='Part-Aware VQVAE',
                 x_baseline=x_motion
             )
             drows.append(row)
 
             x = interpolated_samples['motion_parts'][si]
             x_motion = interpolated_samples['motions'][si]
-            row = self._get_result_from_vqvae(
+            row = self._get_result_from_vae(
                 x = x,
                 clip_id=clip_id,
                 sample_id=f"interpolated_{clip_id}_{si}",
                 sample_text=f"Interpolated sample {si} (latent space)",
-                full_text=f"Interpolation of - {interpolated_samples['text_a']} : {interpolated_samples['text_b']}",
                 x_baseline=x_motion
             )
             rows.append(row)
+
+        metrics_path = pjoin(self.metrics_dir, 'data_interpolated_samples_metrics.json')
+        with open(metrics_path, "w") as f:
+            json.dump(drows, f, indent=4)
+
+        metrics_path = pjoin(self.metrics_dir, 'interpolated_samples_metrics.json')
+        with open(metrics_path, "w") as f:
+                x_baseline=x_motion
+        rows.append(row)
 
         metrics_path = pjoin(self.metrics_dir, 'data_interpolated_samples_metrics.json')
         with open(metrics_path, "w") as f:
@@ -424,8 +435,8 @@ class VQVAEValidator:
         # test for memorization of samples
         self.validate_dataset(self.train_dataloader, 'train')
         self.validate_dataset(self.val_dataloader, 'val')
-        self.validate_interpolated_samples()
-        self.validate_random_uniform_samples()
+        #self.validate_interpolated_samples()
+        #self.validate_random_uniform_samples()
         
         #return train_eval_results, val_eval_results, interpolation_results, uniform_sampling_results
 

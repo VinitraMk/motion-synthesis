@@ -3,7 +3,7 @@ import argparse
 from pathlib import Path
 from os.path import join as pjoin
 import torch
-from networks.nn import DiT
+from networks.nn import DiT, MotionVAE
 from networks.transformer_modules import TextTokenEncoder
 from utils.pretrained_model_utils import get_pretrained_vae, get_pretrained_text_encoder
 import numpy as np
@@ -19,7 +19,7 @@ except Exception:
     MATPLOTLIB_AVAILABLE = False
 
 class MotionPipeline:
-    def __init__(self, dit: DiT, text_embedder, decoder, device, meta_dir,
+    def __init__(self, dit: DiT, text_embedder, pretrained_decoder, vae, device, meta_dir,
         num_train_timesteps=1000,
         num_inference_steps = 1000,
         beta_start=1e-4,
@@ -28,7 +28,8 @@ class MotionPipeline:
         self.dit = dit
         self.dit.eval()
         self.text_embedder = text_embedder
-        self.decoder = decoder
+        self.pretrained_decoder = pretrained_decoder
+        self.vae = vae
         self.device = device
         self.num_train_timesteps = num_train_timesteps
         self.num_inference_steps = num_inference_steps
@@ -170,8 +171,8 @@ class MotionPipeline:
         print("cross_out diff mean abs:", (last_cross_out - last_cross_out1).abs().mean().item())
         print("cross_out diff max abs:",  (last_cross_out - last_cross_out1).abs().max().item())
 
-        motion1 = self.decoder(latent)
-        motion2 = self.decoder(latent1)
+        motion1 = self.pretrained_decoder(latent)
+        motion2 = self.pretrained_decoder(latent1)
         denormalized_motion1 = self.denormalize_motion(motion1[0])
         denormalized_motion2 = self.denormalize_motion(motion2[0])
 
@@ -224,7 +225,8 @@ class MotionPipeline:
             batch_size = batch_size
         )
         print('latent stats: ', latent.mean(), latent.std(), latent.abs().max())
-        motion = self.decoder(latent)
+        #motion = self.pretrained_decoder(latent)
+        motion = self.vae.decode(latent)
         denormalized_motion = self.denormalize_motion(motion[0])
         motion_joints = recover_from_ric(denormalized_motion, self.joints_num)
         return motion_joints
@@ -254,6 +256,14 @@ def load_models(device, model_dir, meta_dir, max_motion_length = 40):
     enc, dec = get_pretrained_vae(model_dir=model_dir)
     enc.eval()
     dec.eval()
+    motion_vae = MotionVAE(
+        dim = 263,
+        hidden_size=512,
+        max_seq_len=max_motion_length,
+        num_heads=4,
+        depth = 9
+    )
+
     #text_encoder, text_tokenizer = get_pretrained_text_encoder(model = "clip_text", device = device)
     text_encoder = TextTokenEncoder(model_name = "clip_text", device = device).to(device)
     text_encoder.eval()
@@ -275,7 +285,8 @@ def load_models(device, model_dir, meta_dir, max_motion_length = 40):
     pipe = MotionPipeline(
         dit=dit,
         text_embedder=text_encoder,
-        decoder=dec,
+        pretrained_decoder=dec,
+        vae = motion_vae,
         device=device,
         meta_dir=meta_dir
     )
