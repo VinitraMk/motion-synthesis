@@ -224,7 +224,7 @@ class MotionPipeline:
             text_mask = text_mask,
             batch_size = batch_size
         )
-        print('latent stats: ', latent.mean(), latent.std(), latent.abs().max())
+        print('latent stats: ', latent.shape, latent.mean(), latent.std(), latent.abs().max())
         #motion = self.pretrained_decoder(latent)
         motion = self.vae.decode(latent)
         denormalized_motion = self.denormalize_motion(motion[0])
@@ -259,10 +259,12 @@ def load_models(device, model_dir, meta_dir, max_motion_length = 40):
     motion_vae = MotionVAE(
         dim = 263,
         hidden_size=512,
-        max_seq_len=max_motion_length,
+        max_seq_len=max_motion_length//4,
         num_heads=4,
         depth = 9
     )
+    motion_vae_chkpt = torch.load(pjoin(model_dir, 'motionvae_full.tar'), map_location = device)
+    motion_vae.load_state_dict(motion_vae_chkpt['vae'])
 
     #text_encoder, text_tokenizer = get_pretrained_text_encoder(model = "clip_text", device = device)
     text_encoder = TextTokenEncoder(model_name = "clip_text", device = device).to(device)

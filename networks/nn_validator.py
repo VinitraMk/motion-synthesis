@@ -113,11 +113,30 @@ class VAEValidator:
 
     def denormalize_motion(self, motion):
         return motion * self.std + self.mean
+    
+    def _build_4d_padding_mask(self, key_padding_mask = None):
+        # key_padding_mask shape: (B, T) boolean mask
+        # Returns a 4D mask of shape (B, 1, T, T) additive mask
+        if key_padding_mask is None:
+            return None
 
+        valid = key_padding_mask.bool()
+        valid = valid[:, :, None] & valid[:, None, :] # [B, T, T]
+
+        key_additive_padmask_4d = torch.zeros_like(valid, dtype=torch.float32)
+        key_additive_padmask_4d = key_additive_padmask_4d.masked_fill(~valid, -1e4)
+        key_additive_padmask_4d = key_additive_padmask_4d.unsqueeze(1) # [B, 1, T, T]
+        return key_additive_padmask_4d
+
+    @torch.no_grad()
     def _get_result_from_vae(self, x: torch.Tensor, clip_id: str, sample_id: str, sample_text: str, x_baseline: torch.Tensor = None, motion_masks: torch.Tensor = None):
         #x = batch_motion_parts[random_sample_idx].unsqueeze(0).float()
-        out = self.vae_model.forward(x[...,:-4], motion_masks)
-        x_recon = out['x_recon']
+        #out = self.vae_model.forward(x[...,:-4], motion_masks)
+        print('mask shape: ', motion_masks.shape)
+        motion_mask_4d = self._build_4d_padding_mask(motion_masks)
+        mu, _ = self.vae_model.encode(x[...,:-4], motion_mask_4d)
+        x_recon = self.vae_model.decode(mu)
+        #x_recon = out['x_recon']
         metrics = self._compute_metrics(x, x_recon)
         base_matrics = {}
 
@@ -143,8 +162,6 @@ class VAEValidator:
             'base_mse': base_matrics.get('mse', None),
             'base_rmse': base_matrics.get('rmse', None),
             'base_max_abs': base_matrics.get('max_abs', None),
-            'recon_loss_model': out['recon_loss'].item(),
-            'total_loss_model': out['loss'].item(),
             'sample_text': sample_text
         }
 

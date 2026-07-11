@@ -3,7 +3,7 @@ from torch.nn import functional as F
 from utils.nn_utils import init_weight
 import torch
 import numpy as np
-from networks.transformer_modules import get_1d_sincos_pos_embed_from_grid, TransformerBlock
+from networks.transformer_modules import get_1d_sincos_pos_embed_from_grid, TransformerBlock, CrossAttention
 
 # pick from EricGuo text-to-motion repo
 class MovementConvEncoder(nn.Module):
@@ -162,9 +162,18 @@ class MovementEncoder(nn.Module):
         self.num_heads = num_heads
         self.depth = depth
         self.max_seq_len = max_seq_len
+        self.motion_cross_attention = CrossAttention(
+            dim=hidden_size,
+            num_heads=4,
+            context_dim=hidden_size
+        )
+        self.latent_frame_tokens = nn.Parameter(
+            torch.randn(1, max_seq_len//4, hidden_size)
+        )
 
         self.embedding = nn.Linear(input_dim, hidden_size)
-        self.pos_embed = nn.Parameter(torch.randn(1, max_seq_len, hidden_size), requires_grad=False)  # Assuming max sequence length of 100
+        self.x_pos_embed = nn.Parameter(torch.randn(1, max_seq_len, hidden_size), requires_grad=False)  # Assuming max sequence length of 120
+        self.x_red_pos_embed = nn.Parameter(torch.rand(1, max_seq_len // 4, hidden_size), requires_grad=False) # assuming compressed sequence length of T/4
         self.transformer_blocks = nn.ModuleList([
             TransformerBlock(hidden_size, num_heads, hidden_size * 4)
             for _ in range(depth)
@@ -183,8 +192,11 @@ class MovementEncoder(nn.Module):
         self.apply(_basic_init)
 
         pos = np.arange(self.max_seq_len, dtype = np.float32)
+        red_pos = np.arange(self.max_seq_len//4, dtype = np.float32)
         pos_embed = get_1d_sincos_pos_embed_from_grid(self.hidden_size, pos)
-        self.pos_embed.data.copy_(torch.from_numpy(pos_embed).unsqueeze(0))
+        red_pos_embed = get_1d_sincos_pos_embed_from_grid(self.hidden_size, red_pos)
+        self.x_pos_embed.data.copy_(torch.from_numpy(pos_embed).unsqueeze(0))
+        self.x_red_pos_embed.data.copy_(torch.from_numpy(red_pos_embed).unsqueeze(0))
 
     
     def masked_mean_pool(self, x, mask):
@@ -199,19 +211,24 @@ class MovementEncoder(nn.Module):
 
     def forward(self, x, key_padding_mask=None):
         # x shape: (B, T, D)
-        x = self.embedding(x) + self.pos_embed
+        B = x.shape[0]
+        x = self.embedding(x) + self.x_pos_embed
         #if torch.isnan(x).any():
             #print('NaN in x b4')
         for block in self.transformer_blocks:
             x = block(x, input_mask = key_padding_mask)
             #if torch.isnan(x).any():
                 #print('NaN in x block')
-        #x = self.norm(x)
         #print('block finite: ', torch.isfinite(x).all().item(), "max:", x.abs().max().item())
-        x_global = self.masked_mean_pool(x, key_padding_mask)
+        #x_global = self.masked_mean_pool(x, key_padding_mask)
         #print('is x_global nan', torch.isnan(x_global).any(), torch.isfinite(x_global).all().item(), "max:", x_global.abs().max().item())
-        mu = self.fc_mu(x_global)
-        logvar = self.fc_logvar(x_global)
+        # get global compressed representation of motion space
+        x_reduced = self.latent_frame_tokens.repeat(B, 1, 1) + self.x_red_pos_embed
+        x_reduced = self.motion_cross_attention(x_reduced, context = x)
+
+        # mu and logvar stas
+        mu = self.fc_mu(x_reduced)
+        logvar = self.fc_logvar(x_reduced)
         #print('is mu or logvar nan', torch.isnan(mu).any() or torch.isnan(logvar).any())
         return mu, logvar
     
@@ -228,9 +245,12 @@ class MovementDecoder(nn.Module):
         self.embedding = nn.Linear(hidden_size, hidden_size)
         self.pos_embed = nn.Parameter(torch.randn(1, max_seq_len, hidden_size), requires_grad=False)  # Assuming max sequence length of 100
         self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(hidden_size, num_heads, hidden_size * 4, context_dim=input_dim)
+            TransformerBlock(hidden_size, num_heads, hidden_size * 4, context_dim=max_seq_len//4)
             for _ in range(depth)
         ])
+        self.motion_seq = nn.Parameter(
+            torch.randn(1, max_seq_len, hidden_size)
+        )
         self.norm = nn.LayerNorm(hidden_size)
         self.out_proj = nn.Linear(hidden_size, out_dim)
         self.initialize_weights()
@@ -248,18 +268,17 @@ class MovementDecoder(nn.Module):
         self.pos_embed.data.copy_(torch.from_numpy(pos_embed))
 
 
-    def forward(self, x, is_autoregressive = False):
+    def forward(self, z, is_autoregressive = False):
         # x shape: (B, D)
-        B = x.shape[0]
-        latent = self.embedding(x).unsqueeze(1)
+        B = z.shape[0]
+        x = self.motion_seq.repeat(B, 1, 1) + self.pos_embed
         #print('is latent in decoder nan', torch.isnan(latent).any())
         #print('ze max and latent max', x.abs().max().item(), latent.abs().max().item())
-        x = self.pos_embed + latent
         #print('x shape after pos enc:', x.shape)
         #print('is x + m0 nan', torch.isnan(x).any())
         for block in self.transformer_blocks:
             if is_autoregressive:
-                x = block(x, latent)
+                x = block(x, z)
             else:
                 x = block(x)
         x = self.out_proj(x)
