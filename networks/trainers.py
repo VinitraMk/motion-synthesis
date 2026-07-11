@@ -433,15 +433,18 @@ class MotionVAETrainer(object):
         loss_logs["loss_kl"] = self.loss_kl.item()
         return loss_logs
 
-    def save(self, file_name, ep, total_it, history = None, best_model_state = None):
+    def save(self, file_name, ep, total_it, history = None, best_model_state = None, best_val = float('inf'), epochs_without_improve = 0):
         state = {
-            "vae": self.vae.state_dict() if best_model_state == None else best_model_state,
+            "vae": self.vae.state_dict(),
+            "best_vae": best_model_state,
             "opt_vae": self.opt_vae.state_dict(),
             "scheduler_vae": self.scheduler_vae.state_dict(),
             "scheduler_beta": self.scheduler_beta.state_dict(),
             "ep": ep,
             "total_it": total_it,
-            "history": history
+            "history": history,
+            "best_val": best_val,
+            "epochs_without_improve": epochs_without_improve
         }
         torch.save(state, file_name)
 
@@ -451,7 +454,10 @@ class MotionVAETrainer(object):
         self.opt_vae.load_state_dict(checkpoint["opt_vae"])
         self.scheduler_vae.load_state_dict(checkpoint["scheduler_vae"])
         self.scheduler_beta.load_state_dict(checkpoint["scheduler_beta"])
-        return checkpoint["ep"], checkpoint["total_it"], checkpoint["history"]
+        best_state = checkpoint["best_vae"]
+        best_val = checkpoint["best_val"]
+        epochs_without_improve = checkpoint["epochs_without_improve"]
+        return checkpoint["ep"], checkpoint["total_it"], checkpoint["history"], best_state, best_val, epochs_without_improve
 
     def train(self, train_dataloader, val_dataloader, plot_eval = None):
         self.vae.to(self.device)
@@ -479,9 +485,13 @@ class MotionVAETrainer(object):
 
         self.epoch = 0
         self.it = 0
+        best_state = None
+        best_val = float('inf')
+        epochs_without_improve = 0
+
         if self.opt.is_continue:
             model_dir = pjoin(self.opt.model_dir, "latest.tar")
-            self.epoch, _, history = self.resume(model_dir)
+            self.epoch, _, history, best_state, best_val, epochs_without_improve = self.resume(model_dir)
             self.it = (self.epoch + 1) * len(train_dataloader)
             print(f'Resuming training from previous checkpoint at epoch {self.epoch}')
 
@@ -499,9 +509,7 @@ class MotionVAETrainer(object):
         val_kl_loss = 0
         patience = self.opt.patience
         min_delta = self.opt.min_loss_delta
-        best_val = float('inf')
-        best_state = None
-        epochs_without_improve = 0
+        
 
         while self.epoch < self.opt.max_epoch:
             train_loss_sum = 0.0
@@ -522,7 +530,7 @@ class MotionVAETrainer(object):
                 self.it += 1
 
                 if self.it % self.opt.save_latest == 0:
-                    self.save(pjoin(self.opt.model_dir, "tmp.tar"), ep = self.epoch, total_it = self.it, history = history)
+                    self.save(pjoin(self.opt.model_dir, "tmp.tar"), ep = self.epoch, total_it = self.it, history = history, best_model_state=best_state, best_val=best_val, epochs_without_improve=epochs_without_improve)
 
             train_loss_avg = train_loss_sum / max(train_steps, 1)
             train_rec_avg = train_rec_sum / max(train_steps, 1)
@@ -558,7 +566,7 @@ class MotionVAETrainer(object):
             if os.path.exists(pjoin(self.opt.model_dir, "tmp.tar")):
                 try:
                     model_ckpt = torch.load(pjoin(self.opt.model_dir, "tmp.tar"), map_location="cpu")
-                    self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = self.epoch, total_it = self.it, history = history)
+                    self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = self.epoch, total_it = self.it, history = history, best_model_state=best_state, best_val=best_val, epochs_without_improve=epochs_without_improve)
                     del model_ckpt
                 except Exception as e:
                     print(f"Failed to load checkpoint from {pjoin(self.opt.model_dir, 'tmp.tar')}. Skipping save to latest.tar. Error: {e}")
@@ -573,13 +581,13 @@ class MotionVAETrainer(object):
 
             if epochs_without_improve >= patience:
                 print(f"Early stopping at epoch {self.epoch}, best val {best_val:.4f}")
-                self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = self.epoch, total_it=self.it, history = history, best_model_state=best_state)
+                self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = self.epoch, total_it=self.it, history = history, best_model_state=best_state, best_val=best_val, epochs_without_improve=epochs_without_improve)
                 self.save_loss_data(history = history)
                 break
 
             
             if self.epoch % self.opt.save_every_e == 0:
-                self.save(pjoin(self.opt.model_dir, "E%04d.tar" % self.epoch), self.epoch, total_it=self.it, history = history)
+                self.save(pjoin(self.opt.model_dir, "E%04d.tar" % self.epoch), self.epoch, total_it=self.it, history = history, best_model_state=best_state, best_val=best_val, epochs_without_improve=epochs_without_improve)
 
             if self.epoch % self.opt.eval_every_e == 0:
                 print("Epoch:", self.epoch)
