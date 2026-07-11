@@ -268,7 +268,7 @@ class MovementDecoder(nn.Module):
         self.pos_embed.data.copy_(torch.from_numpy(pos_embed))
 
 
-    def forward(self, z, is_autoregressive = False):
+    def forward(self, z, is_autoregressive = True):
         # x shape: (B, D)
         B = z.shape[0]
         x = self.motion_seq.repeat(B, 1, 1) + self.pos_embed
