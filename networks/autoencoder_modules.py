@@ -245,7 +245,7 @@ class MovementDecoder(nn.Module):
         self.embedding = nn.Linear(hidden_size, hidden_size)
         self.pos_embed = nn.Parameter(torch.randn(1, max_seq_len, hidden_size), requires_grad=False)  # Assuming max sequence length of 100
         self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(hidden_size, num_heads, hidden_size * 4, context_dim=max_seq_len//4)
+            TransformerBlock(hidden_size, num_heads, hidden_size * 4, context_dim=hidden_size)
             for _ in range(depth)
         ])
         self.motion_seq = nn.Parameter(
