@@ -363,6 +363,8 @@ class MotionVAETrainer(object):
             ("loss", "Total Loss"),
             ("loss_rec", "Reconstruction Loss"),
             ("loss_kl", "KL Loss"),
+            ("loss_rec_feat", "Reconstruction Feature Loss"),
+            ("loss_rec_jt", "Reconstruction Joint Loss")
         ]
 
         for key, title in loss_pairs:
@@ -409,7 +411,9 @@ class MotionVAETrainer(object):
         self.loss = self.outputs["loss"]
         self.loss_rec = self.outputs["recon_loss"]
         self.loss_kl = self.outputs["kl_loss"]
-        
+        self.loss_rec_feat = self.outputs["recon_feat_loss"]
+        self.loss_rec_jt = self.outputs["recon_joint_loss"]
+
         if torch.isnan(self.recon_motions).any():
             print("NaN in pred")
             
@@ -431,6 +435,8 @@ class MotionVAETrainer(object):
         loss_logs["loss"] = self.loss.item()
         loss_logs["loss_rec"] = self.loss_rec.item()
         loss_logs["loss_kl"] = self.loss_kl.item()
+        loss_logs["loss_rec_feat"] = self.loss_rec_feat.item()
+        loss_logs["loss_rec_jt"] = self.loss_rec_jt.item()
         return loss_logs
 
     def save(self, file_name, ep, total_it, history = None, best_model_state = None, best_val = float('inf'), epochs_without_improve = 0):
@@ -476,9 +482,13 @@ class MotionVAETrainer(object):
             "train_loss": [],
             "train_loss_rec": [],
             "train_loss_kl": [],
+            "train_loss_rec_feat": [],
+            "train_loss_rec_jt": [],
             "val_loss": [],
             "val_loss_rec": [],
             "val_loss_kl": [],
+            "val_loss_rec_feat": [],
+            "val_loss_rec_jt": [],
         }
         
         print("Number of epochs:", self.opt.max_epoch)
@@ -515,6 +525,8 @@ class MotionVAETrainer(object):
             train_loss_sum = 0.0
             train_rec_sum = 0.0
             train_kl_sum = 0.0
+            train_rec_feat_sum = 0.0
+            train_rec_jt_sum = 0.0
             train_steps = 0
             for _, batch_data in enumerate(train_dataloader):
                 self.vae.train()
@@ -524,6 +536,8 @@ class MotionVAETrainer(object):
                 train_loss_sum += self.loss.item()
                 train_rec_sum += self.loss_rec.item()
                 train_kl_sum += self.loss_kl.item()
+                train_rec_feat_sum += self.loss_rec_feat.item()
+                train_rec_jt_sum += self.loss_rec_jt.item()
                 #print(f"Epoch: {self.epoch}, Iter: {it}, Loss: {self.loss.item():.5f}, Rec Loss: {self.loss_rec.item():.5f}, KL Loss: {self.loss_kl.item():.5f}")
                 train_steps += 1
 
@@ -535,15 +549,21 @@ class MotionVAETrainer(object):
             train_loss_avg = train_loss_sum / max(train_steps, 1)
             train_rec_avg = train_rec_sum / max(train_steps, 1)
             train_kl_avg = train_kl_sum / max(train_steps, 1)
+            train_rec_feat_avg = train_rec_feat_sum / max(train_steps, 1)
+            train_rec_jt_avg = train_rec_jt_sum / max(train_steps, 1)
 
             history["train_loss"].append(train_loss_avg)
             history["train_loss_rec"].append(train_rec_avg)
             history["train_loss_kl"].append(train_kl_avg)
+            history["train_loss_rec_feat"].append(train_rec_feat_avg)
+            history["train_loss_rec_jt"].append(train_rec_jt_avg)
 
             #print("Validation time:")
             val_loss = 0
             val_rec_loss = 0
             val_kl_loss = 0
+            val_rec_feat_loss = 0
+            val_rec_jt_loss = 0
 
             with torch.no_grad():
                 self.vae.eval()
@@ -553,15 +573,21 @@ class MotionVAETrainer(object):
                     val_loss += self.loss.item()
                     val_rec_loss += self.loss_rec.item()
                     val_kl_loss += self.loss_kl.item()
+                    val_rec_feat_loss += self.loss_rec_feat.item()
+                    val_rec_jt_loss += self.loss_rec_jt.item()
 
             denom = max(len(val_dataloader), 1)
             val_loss /= denom
             val_rec_loss /= denom
             val_kl_loss /= denom
+            val_rec_feat_loss /= denom
+            val_rec_jt_loss /= denom
 
             history["val_loss"].append(val_loss)
             history["val_loss_rec"].append(val_rec_loss)
             history["val_loss_kl"].append(val_kl_loss)
+            history["val_loss_rec_feat"].append(val_rec_feat_loss)
+            history["val_loss_rec_jt"].append(val_rec_jt_loss)
 
             if os.path.exists(pjoin(self.opt.model_dir, "tmp.tar")):
                 try:

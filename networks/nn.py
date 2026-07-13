@@ -5,7 +5,7 @@ import torch
 from networks.transformer_modules import ScalarCondEmbedder, TextEmbedder, DiTBlock, FinalLayer, get_1d_sincos_pos_embed_from_grid
 import numpy as np
 from transformers import AutoTokenizer, AutoModel
-
+from data_utils.motion_processor import recover_from_ric
 # motion nn
 
 class MotionVQVAE(nn.Module):
@@ -296,6 +296,23 @@ class MotionVAE(nn.Module):
         key_additive_padmask_4d = key_additive_padmask_4d.masked_fill(~valid, -1e4)
         key_additive_padmask_4d = key_additive_padmask_4d.unsqueeze(1) # [B, 1, T, T]
         return key_additive_padmask_4d
+    
+    def _get_joint_recon_loss(self, x_recon_jt, x_jt, key_padding_mask=None):
+        key_padding_mask_jt = key_padding_mask.unsqueeze(-1).unsqueeze(-1)
+        joints_ref_masked = x_jt * key_padding_mask_jt
+        joints_recon_masked = x_recon_jt * key_padding_mask_jt
+        return F.smooth_l1_loss(joints_recon_masked, joints_ref_masked)
+    
+    def _get_feature_recon_loss(self, x_recon, x, key_padding_mask=None):
+        if key_padding_mask is not None:
+            per_feat_loss = F.smooth_l1_loss(x_recon[:, :, :-4], x, reduction = "none", beta = 1.0)
+            per_frame_loss = per_feat_loss.mean(dim = -1)
+            masked_frame_loss = per_frame_loss * key_padding_mask
+            valid_frames_per_sample = key_padding_mask.sum(dim = -1).clamp(min = 1.0) # [B]
+            loss_per_sample = masked_frame_loss.sum(dim = 1) / valid_frames_per_sample
+            return loss_per_sample.mean()
+        else:
+            return F.smooth_l1_loss(x_recon, x)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -340,26 +357,35 @@ class MotionVAE(nn.Module):
         kl_loss = kl_loss.sum(dim=-1).mean()
 
         if key_padding_mask is not None:
-            D = x.size(-1)
-            abs_diff = torch.abs(x - x_recon[:,:,:-4])
-            error_per_frame = abs_diff.sum(dim=-1) / D # Sum over the feature dimension - BxT
-            masked_error_per_frame = error_per_frame * key_padding_mask.float()
+            #D = x.size(-1)
+            #abs_diff = torch.abs(x - x_recon[:,:,:-4])
+            #error_per_frame = abs_diff.sum(dim=-1) / D # Sum over the feature dimension - BxT
+            #masked_error_per_frame = error_per_frame * key_padding_mask.float()
 
-            valid_frames_per_sample = key_padding_mask.sum(dim = -1).clamp(min = 1.0)
-            loss_per_sample = masked_error_per_frame.sum(dim = 1) / valid_frames_per_sample # sum over time dimension - Bx1
-            recon_loss = loss_per_sample.mean()
+            #valid_frames_per_sample = key_padding_mask.sum(dim = -1).clamp(min = 1.0)
+            #loss_per_sample = masked_error_per_frame.sum(dim = 1) / valid_frames_per_sample # sum over time dimension - Bx1
+            #recon_loss = loss_per_sample.mean()
+            recon_feat_loss = self._get_feature_recon_loss(x_recon, x, key_padding_mask)
+            x_jts = recover_from_ric(x, 22)
+            x_recon_jts = recover_from_ric(x_recon, 22)
+            recon_joint_loss = self._get_joint_recon_loss(x_recon_jts, x_jts, key_padding_mask)
             #print('input shape', x.shape, x_recon.shape, loss_mask.sum(), recon_l1.sum(), recon_loss)
         else:
-            recon_loss = F.l1_loss(x_recon[:,:,:-4], x)
+            recon_feat_loss = F.smooth_l1_loss(x_recon[:,:,:-4], x)
+            x_jts = recover_from_ric(x, 22)
+            x_recon_jts = recover_from_ric(x_recon, 22)
+            recon_joint_loss = F.smooth_l1_loss(x_recon_jts, x_jts)
 
-        loss = recon_loss + beta * kl_loss
+        loss = recon_feat_loss + recon_joint_loss + beta * kl_loss
 
         return {
             "x_recon": x_recon,
             "z_e": z_e,
             "loss": loss,
             "kl_loss": kl_loss,
-            "recon_loss": recon_loss,
+            "recon_loss": recon_feat_loss + recon_joint_loss,
+            "recon_feat_loss": recon_feat_loss,
+            "recon_joint_loss": recon_joint_loss,
             "mu": mu,
             "logvar": logvar
         }
