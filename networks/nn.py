@@ -322,7 +322,7 @@ class MotionVAE(nn.Module):
         global_motion_tokens = torch.tile(self.global_motion_tokens, (B, 1, 1))
         x_seq = torch.cat([global_motion_tokens, x], dim=1)
         if key_padding_mask != None:
-            aug_mask = torch.cat([torch.ones(B, 1), key_padding_mask], dim = 1)
+            aug_mask = torch.cat([torch.ones(B, 1, device = key_padding_mask.device), key_padding_mask], dim = 1)
         else:
             aug_mask = key_padding_mask
 
