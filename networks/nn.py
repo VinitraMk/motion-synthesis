@@ -312,8 +312,8 @@ class MotionVAE(nn.Module):
         latent = self.reparameterize(mu, logvar)
         return latent, mu, logvar
 
-    def decode(self, z_e):
-        return self.decoder(z_e)
+    def decode(self, z_e, key_padding_mask=None):
+        return self.decoder(z_e, input_mask=key_padding_mask)
 
     def forward(self, x, key_padding_mask=None, beta = 1e-4):
         B, T, D  = x.shape
@@ -322,7 +322,7 @@ class MotionVAE(nn.Module):
         global_motion_tokens = torch.tile(self.global_motion_tokens, (B, 1, 1))
         x_seq = torch.cat([global_motion_tokens, x], dim=1)
         if key_padding_mask != None:
-            aug_mask = torch.cat([torch.ones(B, 1), key_padding_mask], dim = 1)
+            aug_mask = torch.cat([torch.ones(B, 1, device = key_padding_mask.device), key_padding_mask], dim = 1)
         else:
             aug_mask = key_padding_mask
 
@@ -333,7 +333,7 @@ class MotionVAE(nn.Module):
         z_e, mu, logvar = self.encode(x_seq, key_padding_mask=key_padding_mask_4d)
 
         # get reconstructed sample 
-        x_recon = self.decode(z_e)
+        x_recon = self.decode(z_e, key_padding_mask=key_padding_mask_4d)
 
         # calculate losses
         kl_loss = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
