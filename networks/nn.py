@@ -297,11 +297,16 @@ class MotionVAE(nn.Module):
         key_additive_padmask_4d = key_additive_padmask_4d.unsqueeze(1) # [B, 1, T, T]
         return key_additive_padmask_4d
     
-    def _get_joint_recon_loss(self, x_recon_jt, x_jt, key_padding_mask=None):
+    def _get_joint_recon_loss(self, x_recon_jt, x_jt, key_padding_mask):
         key_padding_mask_jt = key_padding_mask.unsqueeze(-1).unsqueeze(-1)
-        joints_ref_masked = x_jt * key_padding_mask_jt
-        joints_recon_masked = x_recon_jt * key_padding_mask_jt
-        return F.smooth_l1_loss(joints_recon_masked, joints_ref_masked)
+        #joints_ref_masked = x_jt * key_padding_mask_jt
+        #joints_recon_masked = x_recon_jt * key_padding_mask_jt
+        per_feat_loss = F.smooth_l1_loss(x_recon_jt, x_jt, reduction="none")
+        per_frame_loss = per_feat_loss.mean(dim = -1)
+        masked_frame_loss = per_frame_loss * key_padding_mask
+        valid_frames_per_sample = key_padding_mask.sum(dim = -1).clamp(min = 1.0)
+        loss_per_sample = masked_frame_loss.sum(dim = 1) / valid_frames_per_sample
+        return loss_per_sample.mean()
     
     def _get_feature_recon_loss(self, x_recon, x, key_padding_mask=None):
         if key_padding_mask is not None:
@@ -376,7 +381,7 @@ class MotionVAE(nn.Module):
             x_recon_jts = recover_from_ric(x_recon, 22)
             recon_joint_loss = F.smooth_l1_loss(x_recon_jts, x_jts)
 
-        loss = recon_feat_loss + recon_joint_loss + beta * kl_loss
+        loss = (0.05 * recon_feat_loss) + recon_joint_loss + beta * kl_loss
 
         return {
             "x_recon": x_recon,
