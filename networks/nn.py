@@ -1,5 +1,5 @@
 from torch import nn
-from networks.autoencoder_modules import PartMovementConvDecoder, PartMovementConvEncoder, VectorQuantizer, MovementEncoder, MovementDecoder
+from networks.autoencoder_modules import PartMovementConvDecoder, PartMovementConvEncoder, VectorQuantizer, MovementEncoder, MovementDecoder, MovementSkipEncoder, MovementSkipDecoder
 from torch.nn import functional as F
 import torch
 from networks.transformer_modules import ScalarCondEmbedder, TextEmbedder, DiTBlock, FinalLayer, get_1d_sincos_pos_embed_from_grid
@@ -243,22 +243,44 @@ class DiT(nn.Module):
         return x
 
 class MotionVAE(nn.Module):
-    def __init__(self, dim, hidden_size, max_seq_len = 10, num_heads = 6, depth = 9):
+    def __init__(self, dim, hidden_size, max_seq_len = 10, t_latent = 1, num_heads = 6, depth = 9):
         super().__init__()
-        self.encoder = MovementEncoder(
-            input_dim=dim - 4,
-            latent_size=(1, hidden_size),
+        #self.encoder = MovementEncoder(
+            #input_dim=dim - 4,
+            #latent_size=(t_latent, hidden_size),
+            #num_heads = num_heads,
+            #depth = depth,
+            #max_seq_len = max_seq_len
+        #)
+        #self.decoder = MovementDecoder(
+            #input_dim = hidden_size,
+            #out_dim = dim,
+            #hidden_size=hidden_size,
+            #num_heads = num_heads,
+            #depth = depth,
+            #max_seq_len = max_seq_len
+        #)
+        self.encoder = MovementSkipEncoder(
+            input_dim = dim - 4,
+            latent_size= (t_latent, hidden_size),
             num_heads = num_heads,
             depth = depth,
-            max_seq_len = max_seq_len
+            max_seq_len=max_seq_len
         )
-        self.decoder = MovementDecoder(
+        self.decoder = MovementSkipDecoder(
             input_dim = hidden_size,
             out_dim = dim,
             hidden_size=hidden_size,
             num_heads = num_heads,
             depth = depth,
             max_seq_len = max_seq_len
+        )
+        self.latent_dim = (t_latent, hidden_size)
+        self.fc_mu = nn.Linear(hidden_size, hidden_size)
+        self.fc_logvar = nn.Linear(hidden_size, hidden_size)
+        scale = self.latent_dim[1] ** -0.5
+        self.global_motion_tokens = nn.Parameter(
+            torch.randn(1, self.latent_dim[0], dim - 4) * scale
         )
 
     def _build_4d_padding_mask(self, key_padding_mask = None):
@@ -280,30 +302,42 @@ class MotionVAE(nn.Module):
         eps = torch.randn_like(std)
         return mu + eps * std
     
-    @torch.no_grad() 
-    def get_encoded_vector(self, x, key_padding_mask=None):
-        mu, logvar = self.encode(x, key_padding_mask = key_padding_mask)
-        return self.reparameterize(mu, logvar)
-
     def encode(self, x, key_padding_mask=None):
-        return self.encoder(x, key_padding_mask=key_padding_mask)
+        out = self.encoder(x, key_padding_mask=key_padding_mask)
+        # extract with just first t_latent token to get global embedding
+        dist = out[:, :self.latent_dim[0], :]
+        mu = self.fc_mu(dist)
+        logvar = self.fc_logvar(dist)
+
+        latent = self.reparameterize(mu, logvar)
+        return latent, mu, logvar
 
     def decode(self, z_e):
         return self.decoder(z_e)
 
     def forward(self, x, key_padding_mask=None, beta = 1e-4):
-        key_padding_mask_4d = self._build_4d_padding_mask(key_padding_mask=key_padding_mask)
-        mu, logvar = self.encode(x, key_padding_mask=key_padding_mask_4d)
-        #print("mu finite:", torch.isfinite(mu).all().item(), "max:", mu.abs().max().item())
-        #print("logvar finite:", torch.isfinite(logvar).all().item(), "max:", logvar.abs().max().item())
-        z_e = self.reparameterize(mu, logvar)
-        #print('z_e shape:', z_e.shape)
-        #print('is z_e nan', torch.isnan(z_e).any())
-        #print("ze finite:", torch.isfinite(z_e).all().item(), "max:", z_e.abs().max().item())
+        B, T, D  = x.shape
 
+        # add a CLS token for global embedding
+        global_motion_tokens = torch.tile(self.global_motion_tokens, (B, 1, 1))
+        x_seq = torch.cat([global_motion_tokens, x], dim=1)
+        if key_padding_mask != None:
+            aug_mask = torch.cat([torch.ones(B, 1), key_padding_mask], dim = 1)
+        else:
+            aug_mask = key_padding_mask
+
+        # get a 4d additive mask for timm Attention
+        key_padding_mask_4d = self._build_4d_padding_mask(key_padding_mask=aug_mask)
+
+        # get latent and stats from encoder
+        z_e, mu, logvar = self.encode(x_seq, key_padding_mask=key_padding_mask_4d)
+
+        # get reconstructed sample 
+        x_recon = self.decode(z_e)
+
+        # calculate losses
         kl_loss = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
         kl_loss = kl_loss.sum(dim=-1).mean()
-        x_recon = self.decode(z_e)
 
         if key_padding_mask is not None:
             D = x.size(-1)
