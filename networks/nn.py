@@ -333,7 +333,7 @@ class MotionVAE(nn.Module):
         z_e, mu, logvar = self.encode(x_seq, key_padding_mask=key_padding_mask_4d)
 
         # get reconstructed sample 
-        x_recon = self.decode(z_e, key_padding_mask=key_padding_mask_4d)
+        x_recon = self.decode(z_e, key_padding_mask=key_padding_mask_4d[:,:,1:, 1:])
 
         # calculate losses
         kl_loss = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
