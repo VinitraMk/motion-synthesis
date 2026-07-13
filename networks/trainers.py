@@ -605,7 +605,7 @@ class MotionVAETrainer(object):
             else:
                 epochs_without_improve += 1
 
-            if epochs_without_improve >= patience:
+            if patience != -1 and epochs_without_improve >= patience:
                 print(f"Early stopping at epoch {self.epoch}, best val {best_val:.4f}")
                 self.save(pjoin(self.opt.model_dir, "latest.tar"), ep = self.epoch, total_it=self.it, history = history, best_model_state=best_state, best_val=best_val, epochs_without_improve=epochs_without_improve)
                 self.save_loss_data(history = history)
