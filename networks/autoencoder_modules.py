@@ -154,33 +154,30 @@ class VectorQuantizer(nn.Module):
 
 class MovementEncoder(nn.Module):
     def __init__(self, input_dim,
-            hidden_size, # latent_dim
+            latent_size = (1, 512), # latent_dim
             num_heads = 4, depth = 9, max_seq_len = 10):
         super(MovementEncoder, self).__init__()
+        T_latent, D_latent = latent_size
         self.input_dim = input_dim
-        self.hidden_size = hidden_size
+        self.hidden_size = D_latent
+        self.t_latent = T_latent
         self.num_heads = num_heads
         self.depth = depth
         self.max_seq_len = max_seq_len
-        self.motion_cross_attention = CrossAttention(
-            dim=hidden_size,
-            num_heads=4,
-            context_dim=hidden_size
-        )
-        self.latent_frame_tokens = nn.Parameter(
-            torch.randn(1, max_seq_len//4, hidden_size)
+        scale = self.hidden_size ** -0.5
+        self.global_motion_tokens = nn.Parameter(
+            torch.randn(1, T_latent, input_dim) * scale
         )
 
-        self.embedding = nn.Linear(input_dim, hidden_size)
-        self.x_pos_embed = nn.Parameter(torch.randn(1, max_seq_len, hidden_size), requires_grad=False)  # Assuming max sequence length of 120
-        self.x_red_pos_embed = nn.Parameter(torch.rand(1, max_seq_len // 4, hidden_size), requires_grad=False) # assuming compressed sequence length of T/4
+        self.embedding = nn.Linear(input_dim, D_latent)
+        self.x_pos_embed = nn.Parameter(torch.randn(1, max_seq_len + self.t_latent, D_latent), requires_grad=False)  # Assuming max sequence length of 120
         self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(hidden_size, num_heads, hidden_size * 4)
+            TransformerBlock(D_latent, num_heads, D_latent * 4)
             for _ in range(depth)
         ])
-        self.norm = nn.LayerNorm(hidden_size)
-        self.fc_mu = nn.Linear(hidden_size, hidden_size)
-        self.fc_logvar = nn.Linear(hidden_size, hidden_size)
+        self.norm = nn.LayerNorm(D_latent)
+        self.fc_mu = nn.Linear(D_latent, D_latent)
+        self.fc_logvar = nn.Linear(D_latent, D_latent)
         self.initialize_weights()
 
     def initialize_weights(self):
@@ -191,28 +188,26 @@ class MovementEncoder(nn.Module):
                     nn.init.constant_(module.bias, 0)
         self.apply(_basic_init)
 
-        pos = np.arange(self.max_seq_len, dtype = np.float32)
-        red_pos = np.arange(self.max_seq_len//4, dtype = np.float32)
+        pos = np.arange(self.max_seq_len + self.t_latent, dtype = np.float32)
         pos_embed = get_1d_sincos_pos_embed_from_grid(self.hidden_size, pos)
-        red_pos_embed = get_1d_sincos_pos_embed_from_grid(self.hidden_size, red_pos)
         self.x_pos_embed.data.copy_(torch.from_numpy(pos_embed).unsqueeze(0))
-        self.x_red_pos_embed.data.copy_(torch.from_numpy(red_pos_embed).unsqueeze(0))
 
     
-    def masked_mean_pool(self, x, mask):
-        # x shape: (B, T, D)
-        # mask shape: (B, 1, T, T)
-        #valid = (~mask).float()
-        diag = mask[:, 0].diagonal(dim1=-2, dim2=-1).float()
-        token_mask = (diag == 0.0)
-        token_mask = token_mask.unsqueeze(-1)
-        x = x * token_mask
-        return x.sum(dim=1) / (token_mask.sum(dim=1).clamp(min = 1.0))
-
     def forward(self, x, key_padding_mask=None):
         # x shape: (B, T, D)
-        B = x.shape[0]
-        x = self.embedding(x) + self.x_pos_embed
+        if key_padding_mask != None:
+            B, _, T, _ = key_padding_mask.shape
+        else:
+            B, _, _ = x.shape
+        global_motion_token = torch.tile(self.global_motion_tokens, (B, 1, 1))
+        x_seq = torch.cat([global_motion_token, x], dim=1)
+        x = self.embedding(x_seq) + self.x_pos_embed
+        
+        if key_padding_mask != None:
+            aug_key_padding_mask = x.new_zeros(B, 1, T+1, T+1)
+            aug_key_padding_mask[:, :, 1:, 1:] = key_padding_mask
+            key_padding_mask = aug_key_padding_mask
+
         #if torch.isnan(x).any():
             #print('NaN in x b4')
         for block in self.transformer_blocks:
@@ -223,13 +218,10 @@ class MovementEncoder(nn.Module):
         #x_global = self.masked_mean_pool(x, key_padding_mask)
         #print('is x_global nan', torch.isnan(x_global).any(), torch.isfinite(x_global).all().item(), "max:", x_global.abs().max().item())
         # get global compressed representation of motion space
-        x_reduced = self.latent_frame_tokens.repeat(B, 1, 1) + self.x_red_pos_embed
-        x_reduced = self.motion_cross_attention(x_reduced, context = x)
-
-        # mu and logvar stas
+        x_reduced = x[:, :self.t_latent, :]  # Take the first token as the global representation
+        # mu and logvar stats
         mu = self.fc_mu(x_reduced)
         logvar = self.fc_logvar(x_reduced)
-        #print('is mu or logvar nan', torch.isnan(mu).any() or torch.isnan(logvar).any())
         return mu, logvar
     
 class MovementDecoder(nn.Module):

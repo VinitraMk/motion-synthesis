@@ -247,7 +247,7 @@ class MotionVAE(nn.Module):
         super().__init__()
         self.encoder = MovementEncoder(
             input_dim=dim - 4,
-            hidden_size=hidden_size,
+            latent_size=(1, hidden_size),
             num_heads = num_heads,
             depth = depth,
             max_seq_len = max_seq_len
