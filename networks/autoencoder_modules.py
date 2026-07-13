@@ -276,3 +276,158 @@ class MovementDecoder(nn.Module):
         x = self.out_proj(x)
         return x
     
+class MovementSkipEncoder(nn.Module):
+    def __init__(self, input_dim,
+            latent_size = (1, 512), # latent_dim
+            num_heads = 4, depth = 9, max_seq_len = 10):
+        super(MovementSkipEncoder, self).__init__()
+        assert depth % 2 == 1, "Depth must be an odd number for U-Net type skip connections"
+        T_latent, D_latent = latent_size
+        num_blocks = depth // 2
+        self.input_dim = input_dim
+        self.hidden_size = D_latent
+        self.t_latent = T_latent
+        self.num_heads = num_heads
+        self.depth = depth
+        self.max_seq_len = max_seq_len
+        scale = self.hidden_size ** -0.5
+        self.global_motion_tokens = nn.Parameter(
+            torch.randn(1, T_latent, input_dim) * scale
+        )
+
+        self.embedding = nn.Linear(input_dim, D_latent)
+        self.x_pos_embed = nn.Parameter(torch.randn(1, max_seq_len + self.t_latent, D_latent), requires_grad=False)  # Assuming max sequence length of 120
+        self.input_blocks = nn.ModuleList([
+            TransformerBlock(D_latent, num_heads, D_latent * 4)
+            for _ in range(num_blocks)
+        ])
+        self.middle_block = TransformerBlock(D_latent, num_heads, D_latent * 4)
+        self.output_blocks = nn.ModuleList([
+            TransformerBlock(D_latent, num_heads, D_latent * 4)
+            for _ in range(num_blocks)
+        ])
+        self.linear_layers = nn.ModuleList([
+            nn.Linear(2 * D_latent, D_latent)
+            for _ in range(num_blocks)
+        ])
+        self.norm = nn.LayerNorm(D_latent)
+        #self.fc_mu = nn.Linear(D_latent, D_latent)
+        #self.fc_logvar = nn.Linear(D_latent, D_latent)
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        def _basic_init(module):
+            if isinstance(module, nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+        self.apply(_basic_init)
+
+        pos = np.arange(self.max_seq_len + self.t_latent, dtype = np.float32)
+        pos_embed = get_1d_sincos_pos_embed_from_grid(self.hidden_size, pos)
+        self.x_pos_embed.data.copy_(torch.from_numpy(pos_embed).unsqueeze(0))
+
+    
+    def forward(self, x, key_padding_mask=None):
+        # x shape: (B, T, D)
+        if key_padding_mask != None:
+            B, _, T, _ = key_padding_mask.shape
+        else:
+            B, _, _ = x.shape
+
+        # add a CLS token for global embedding
+        #global_motion_token = torch.tile(self.global_motion_tokens, (B, 1, 1))
+        #x_seq = torch.cat([global_motion_token, x], dim=1)
+        x = self.embedding(x) + self.x_pos_embed
+        x_outs = []
+        for block in self.input_blocks:
+            x = block(x, input_mask = key_padding_mask)
+            x_outs.append(x)
+        x = self.middle_block(x)
+        for (linear, block) in zip(self.linear_layers, self.output_blocks):
+            x = torch.cat([x, x_outs.pop()], dim=-1)
+            x = linear(x)
+            x = block(x, input_mask = key_padding_mask)
+
+        return x
+    
+class MovementSkipDecoder(nn.Module):
+    def __init__(self, input_dim, # latent_dim 
+            hidden_size, out_dim, num_heads = 4, depth = 9, max_seq_len = 10):
+        super(MovementSkipDecoder, self).__init__()
+        assert depth % 2 == 1, "Depth must be an odd number for U-Net type skip connections"
+        D_latent = hidden_size
+        num_blocks = depth // 2
+        self.input_dim = input_dim
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.depth = depth
+        self.max_seq_len = max_seq_len
+
+        self.embedding = nn.Linear(hidden_size, hidden_size)
+        self.pos_embed = nn.Parameter(torch.randn(1, max_seq_len, hidden_size), requires_grad=False)  # Assuming max sequence length of 100
+        #self.transformer_blocks = nn.ModuleList([
+            #TransformerBlock(hidden_size, num_heads, hidden_size * 4, context_dim=hidden_size)
+            #for _ in range(depth)
+        #])
+        self.motion_seq = nn.Parameter(
+            torch.randn(1, max_seq_len, hidden_size)
+        )
+        self.input_blocks = nn.ModuleList([
+            TransformerBlock(D_latent, num_heads, D_latent * 4)
+            for _ in range(num_blocks)
+        ])
+        self.middle_block = TransformerBlock(D_latent, num_heads, D_latent * 4)
+        self.output_blocks = nn.ModuleList([
+            TransformerBlock(D_latent, num_heads, D_latent * 4)
+            for _ in range(num_blocks)
+        ])
+        self.linear_layers = nn.ModuleList([
+            nn.Linear(2 * D_latent, D_latent)
+            for _ in range(num_blocks)
+        ])
+        self.norm = nn.LayerNorm(hidden_size)
+        self.out_proj = nn.Linear(hidden_size, out_dim)
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        def _basic_init(module):
+            if isinstance(module, nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+        self.apply(_basic_init)
+
+        pos = np.arange(self.max_seq_len, dtype = np.float32)
+        pos_embed = get_1d_sincos_pos_embed_from_grid(self.hidden_size, pos)
+        self.pos_embed.data.copy_(torch.from_numpy(pos_embed))
+
+
+    def forward(self, z, input_mask=None, is_autoregressive = True):
+        # x shape: (B, D)
+        B = z.shape[0]
+        x = self.motion_seq.repeat(B, 1, 1) + self.pos_embed
+
+        x_outs = []
+        for block in self.input_blocks:
+            if is_autoregressive:
+                x = block(x, context=z, input_mask=input_mask)
+            else:
+                x = block(x, input_mask=input_mask)
+            x_outs.append(x)
+
+        if is_autoregressive:
+            x = self.middle_block(x, context=z, input_mask=input_mask)
+        else:
+            x = self.middle_block(x, input_mask=input_mask)
+
+        for linear, block in zip(self.linear_layers, self.output_blocks):
+            x = torch.cat([x, x_outs.pop()], dim=-1)
+            x = linear(x)
+            if is_autoregressive:
+                x = block(x, context=z, input_mask=input_mask)
+            else:
+                x = block(x, input_mask=input_mask)
+        x = self.out_proj(x)
+        return x
+    
