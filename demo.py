@@ -263,7 +263,7 @@ def load_models(device, model_dir, meta_dir, max_motion_length = 40):
         num_heads=4,
         depth = 9
     )
-    motion_vae_chkpt = torch.load(pjoin(model_dir, 'motionvae_full.tar'), map_location = device)
+    motion_vae_chkpt = torch.load(pjoin(model_dir, 'motionvae_debug.tar'), map_location = device)
     motion_vae.load_state_dict(motion_vae_chkpt['vae'])
 
     #text_encoder, text_tokenizer = get_pretrained_text_encoder(model = "clip_text", device = device)

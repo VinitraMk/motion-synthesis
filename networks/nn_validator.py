@@ -135,6 +135,7 @@ class VAEValidator:
         print('mask shape: ', motion_masks.shape)
         motion_mask_4d = self._build_4d_padding_mask(motion_masks)
         mu, _ = self.vae_model.encode(x[...,:-4], motion_mask_4d)
+        print('mu shape: ', mu.shape)
         x_recon = self.vae_model.decode(mu)
         #x_recon = out['x_recon']
         metrics = self._compute_metrics(x, x_recon)
@@ -208,7 +209,7 @@ class VAEValidator:
                     clip_id = sample_id,
                     joints_baseline=joints_baseline,
                     text = sample_text,
-                    fps=120,
+                    fps=20,
                     save_mp4=True
                 )
                 if video_path != "" or video_path != None:
@@ -247,7 +248,7 @@ class VAEValidator:
                 clip_ids = batch['file_id']
                 random_sample_idx = rng.sample(range(batch_size), 1)[0]
                 clip_id = clip_ids[random_sample_idx]
-                sample_id = f'{dataset_type}_{clip_id}_{random_sample_idx}'
+                sample_id = f'{dataset_type}_{clip_id}'
 
                 #rng = random.Random(100)
                 #print('batch length: ', batch_size, len(self.val_dataloader.dataset))
@@ -260,7 +261,8 @@ class VAEValidator:
                     clip_id = clip_ids[random_sample_idx],
                     sample_id = sample_id,
                     sample_text = batch_text[random_sample_idx],
-                    motion_masks = x_mask
+                    motion_masks = x_mask,
+                    x_baseline = x_motion
                 )
                 
                 rows.append(row)
