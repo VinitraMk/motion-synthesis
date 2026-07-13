@@ -312,8 +312,8 @@ class MotionVAE(nn.Module):
         latent = self.reparameterize(mu, logvar)
         return latent, mu, logvar
 
-    def decode(self, z_e):
-        return self.decoder(z_e)
+    def decode(self, z_e, key_padding_mask=None):
+        return self.decoder(z_e, input_mask=key_padding_mask)
 
     def forward(self, x, key_padding_mask=None, beta = 1e-4):
         B, T, D  = x.shape
@@ -333,7 +333,7 @@ class MotionVAE(nn.Module):
         z_e, mu, logvar = self.encode(x_seq, key_padding_mask=key_padding_mask_4d)
 
         # get reconstructed sample 
-        x_recon = self.decode(z_e)
+        x_recon = self.decode(z_e, key_padding_mask=key_padding_mask_4d)
 
         # calculate losses
         kl_loss = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
