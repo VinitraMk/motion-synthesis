@@ -302,10 +302,11 @@ class MotionVAE(nn.Module):
         #joints_ref_masked = x_jt * key_padding_mask_jt
         #joints_recon_masked = x_recon_jt * key_padding_mask_jt
         per_feat_loss = F.smooth_l1_loss(x_recon_jt, x_jt, reduction="none")
-        per_frame_loss = per_feat_loss.mean(dim = -1)
+        per_frame_loss = per_feat_loss.mean(dim = (-2, -1)) # [B, T]
+        #print('per frame loss shape', per_frame_loss.shape)
         masked_frame_loss = per_frame_loss * key_padding_mask
         valid_frames_per_sample = key_padding_mask.sum(dim = -1).clamp(min = 1.0)
-        loss_per_sample = masked_frame_loss.sum(dim = 1) / valid_frames_per_sample
+        loss_per_sample = masked_frame_loss.sum(dim = 1) / valid_frames_per_sample # [B]
         return loss_per_sample.mean()
     
     def _get_feature_recon_loss(self, x_recon, x, key_padding_mask=None):
