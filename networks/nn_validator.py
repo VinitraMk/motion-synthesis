@@ -137,7 +137,7 @@ class VAEValidator:
         #mu, _ = self.vae_model.encode(x[...,:-4], motion_mask_4d)
         #print('mu shape: ', mu.shape)
         #x_recon = self.vae_model.decode(mu)
-        x_recon = self.vae_model.forward(x[...,:-4], motion_masks)['x_recon']
+        x_recon = self.vae_model.forward(x, motion_masks)['x_recon']
         metrics = self._compute_metrics(x, x_recon)
         base_matrics = {}
 

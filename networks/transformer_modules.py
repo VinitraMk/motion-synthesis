@@ -125,9 +125,9 @@ class TransformerBlock(nn.Module):
         if context != None:
             attn_out = self.mh_attn(x, attn_mask = input_mask)
             #print('context attn_out isnan: ', torch.isnan(attn_out).any())
-            attn_out = self.norm1(x + attn_out)
-            cross_out = self.cross_attn(attn_out, context, mask = context_mask)
-            x = self.norm2(attn_out + cross_out)
+            x = self.norm1(x + attn_out)
+            cross_out = self.cross_attn(x, context, mask = context_mask)
+            x = self.norm2(x + cross_out)
         else:
             attn_out = self.mh_attn(x, attn_mask = input_mask)
             #print('attn_out isnan: ', torch.isnan(attn_out).any())
@@ -166,7 +166,7 @@ class CrossAttention(nn.Module):
         if mask is not None:
             mask = mask[:, None, None, :].to(dtype = torch.bool)
             attn_scores = attn_scores.masked_fill(~mask, -1e6)
-
+        print('attn score shape: ', attn_scores.shape, self.head_dim)
         attn_weights = torch.softmax(attn_scores, dim=-1)
         attn_weights = self.dropout(attn_weights)
 
