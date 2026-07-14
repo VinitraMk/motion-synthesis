@@ -6,6 +6,7 @@ from networks.transformer_modules import ScalarCondEmbedder, TextEmbedder, DiTBl
 import numpy as np
 from transformers import AutoTokenizer, AutoModel
 from data_utils.motion_processor import recover_from_ric
+from os.path import join as pjoin
 # motion nn
 
 class MotionVQVAE(nn.Module):
@@ -243,7 +244,7 @@ class DiT(nn.Module):
         return x
 
 class MotionVAE(nn.Module):
-    def __init__(self, dim, hidden_size, max_seq_len = 10, t_latent = 1, num_heads = 6, depth = 9):
+    def __init__(self, dim, hidden_size, max_seq_len = 10, t_latent = 1, num_heads = 6, depth = 9, meta_dir = 'checkpoints/meta'):
         super().__init__()
         #self.encoder = MovementEncoder(
             #input_dim=dim - 4,
@@ -280,8 +281,10 @@ class MotionVAE(nn.Module):
         self.fc_logvar = nn.Linear(hidden_size, hidden_size)
         scale = self.latent_dim[1] ** -0.5
         self.global_motion_tokens = nn.Parameter(
-            torch.randn(1, self.latent_dim[0], dim - 4) * scale
+            torch.randn(1, self.latent_dim[0], dim) * scale
         )
+        self.mean = torch.tensor(np.load(pjoin(meta_dir, 'mean.npy')))
+        self.std = torch.tensor(np.load(pjoin(meta_dir, 'std.npy')))
 
     def _build_4d_padding_mask(self, key_padding_mask = None):
         # key_padding_mask shape: (B, T) boolean mask
@@ -293,9 +296,18 @@ class MotionVAE(nn.Module):
         valid = valid[:, :, None] & valid[:, None, :] # [B, T, T]
 
         key_additive_padmask_4d = torch.zeros_like(valid, dtype=torch.float32)
-        key_additive_padmask_4d = key_additive_padmask_4d.masked_fill(~valid, -1e4)
+        key_additive_padmask_4d = key_additive_padmask_4d.masked_fill(~valid, -1e6)
         key_additive_padmask_4d = key_additive_padmask_4d.unsqueeze(1) # [B, 1, T, T]
         return key_additive_padmask_4d
+    
+    def _get_joints_from_motion(self, x):
+        #print('x device', x.device, self.std.device, self.mean.device)
+        mean = self.mean.to(x)
+        std = self.std.to(x)
+        #print('x shape', mean.shape, std.shape, x.shape)
+        x_denormed = x * std + mean
+        x_jts = recover_from_ric(x_denormed, 22)
+        return x_jts
     
     def _get_joint_recon_loss(self, x_recon_jt, x_jt, key_padding_mask):
         key_padding_mask_jt = key_padding_mask.unsqueeze(-1).unsqueeze(-1)
@@ -310,7 +322,7 @@ class MotionVAE(nn.Module):
     
     def _get_feature_recon_loss(self, x_recon, x, key_padding_mask=None):
         if key_padding_mask is not None:
-            per_feat_loss = F.smooth_l1_loss(x_recon[:, :, :-4], x, reduction = "none", beta = 1.0)
+            per_feat_loss = F.smooth_l1_loss(x_recon[:, :, :-4], x[:,:,:-4], reduction = "none", beta = 1.0)
             per_frame_loss = per_feat_loss.mean(dim = -1)
             masked_frame_loss = per_frame_loss * key_padding_mask
             valid_frames_per_sample = key_padding_mask.sum(dim = -1).clamp(min = 1.0) # [B]
@@ -352,7 +364,7 @@ class MotionVAE(nn.Module):
         key_padding_mask_4d = self._build_4d_padding_mask(key_padding_mask=aug_mask)
 
         # get latent and stats from encoder
-        z_e, mu, logvar = self.encode(x_seq, key_padding_mask=key_padding_mask_4d)
+        z_e, mu, logvar = self.encode(x_seq[:, :, :-4], key_padding_mask=key_padding_mask_4d)
 
         # get reconstructed sample 
         x_recon = self.decode(z_e, key_padding_mask=key_padding_mask_4d[:,:,1:, 1:])
@@ -370,18 +382,18 @@ class MotionVAE(nn.Module):
             #valid_frames_per_sample = key_padding_mask.sum(dim = -1).clamp(min = 1.0)
             #loss_per_sample = masked_error_per_frame.sum(dim = 1) / valid_frames_per_sample # sum over time dimension - Bx1
             #recon_loss = loss_per_sample.mean()
-            recon_feat_loss = self._get_feature_recon_loss(x_recon, x, key_padding_mask)
-            x_jts = recover_from_ric(x, 22)
-            x_recon_jts = recover_from_ric(x_recon, 22)
+            recon_feat_loss = self._get_feature_recon_loss(x_recon[:,:,:-4], x[:,:,:-4], key_padding_mask)
+            x_jts = self._get_joints_from_motion(x)
+            x_recon_jts = self._get_joints_from_motion(x_recon)
             recon_joint_loss = self._get_joint_recon_loss(x_recon_jts, x_jts, key_padding_mask)
             #print('input shape', x.shape, x_recon.shape, loss_mask.sum(), recon_l1.sum(), recon_loss)
         else:
-            recon_feat_loss = F.smooth_l1_loss(x_recon[:,:,:-4], x)
-            x_jts = recover_from_ric(x, 22)
-            x_recon_jts = recover_from_ric(x_recon, 22)
+            recon_feat_loss = F.smooth_l1_loss(x_recon[:,:,:-4], x[:, :, :-4])
+            x_jts = self._get_joints_from_motion(x)
+            x_recon_jts = self._get_joints_from_motion(x_recon)
             recon_joint_loss = F.smooth_l1_loss(x_recon_jts, x_jts)
 
-        loss = recon_feat_loss + (0.01 * recon_joint_loss) + beta * kl_loss
+        loss = recon_feat_loss + recon_joint_loss + beta * kl_loss
 
         return {
             "x_recon": x_recon,
