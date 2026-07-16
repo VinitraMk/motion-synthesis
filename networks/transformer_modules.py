@@ -15,6 +15,7 @@ import numpy as np
 import math
 from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
 from transformers import AutoTokenizer, AutoModel, CLIPTextModel
+from typing import Optional
 
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
@@ -107,6 +108,43 @@ class TextTokenEncoder(nn.Module):
 class TransformerBlock(nn.Module):
     def __init__(self, dim, num_heads, dim_ff, context_dim = None, dropout = 0.1):
         super().__init__()
+        self.norm1 = nn.LayerNorm(dim, eps=1e-6)
+        self.mh_attn = nn.MultiheadAttention(dim, num_heads=num_heads, dropout=dropout, batch_first=True)
+        self.dropout1 = nn.Dropout(0.1)
+        self.cross_attn = nn.MultiheadAttention(dim, num_heads=num_heads, dropout = dropout, batch_first = True)
+        self.dropout2 = nn.Dropout(0.1)
+        self.norm2 = nn.LayerNorm(dim, eps=1e-6)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, dim_ff),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim_ff, dim),
+        )
+        self.norm3 = nn.LayerNorm(dim)
+        self.dropout3 = nn.Dropout(0.1)
+
+    def with_pos_encoding(self, x: torch.Tensor, pos: Optional[torch.Tensor]):
+        return x if pos is None else x + pos
+
+    def forward(self, x, context = None, context_mask = None, attn_mask = None, query_pos = None, context_pos = None):
+        q = k = self.with_pos_encoding(x, query_pos)
+
+        attn_out, _ = self.mh_attn(q, k, value = x, key_padding_mask = context_mask)
+        x = self.norm1(x + self.dropout1(attn_out))
+
+        if context != None:
+            q = self.with_pos_encoding(x, query_pos)
+            k = self.with_pos_encoding(context, context_pos)
+            cross_out, _ = self.cross_attn(q, k, value = context, key_padding_mask = context_mask, attn_mask = attn_mask)
+            x = self.norm2(x + self.dropout2(cross_out))
+
+        ff_out = self.mlp(x)
+        x = self.norm3(x + self.dropout3(ff_out))
+        return x
+
+class VTransformerBlock(nn.Module):
+    def __init__(self, dim, num_heads, dim_ff, context_dim = None, dropout = 0.1):
+        super().__init__()
         self.norm1 = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
         self.mh_attn = Attention(dim, num_heads=num_heads, attn_drop=dropout, proj_drop=dropout, qkv_bias = True)
         self.cross_attn = CrossAttention(dim, num_heads=num_heads, context_dim=context_dim, dropout=dropout)
@@ -166,7 +204,6 @@ class CrossAttention(nn.Module):
         if mask is not None:
             mask = mask[:, None, None, :].to(dtype = torch.bool)
             attn_scores = attn_scores.masked_fill(~mask, -1e6)
-        print('attn score shape: ', attn_scores.shape, self.head_dim)
         attn_weights = torch.softmax(attn_scores, dim=-1)
         attn_weights = self.dropout(attn_weights)
 

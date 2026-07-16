@@ -244,38 +244,40 @@ class DiT(nn.Module):
         return x
 
 class MotionVAE(nn.Module):
-    def __init__(self, dim, hidden_size, max_seq_len = 10, t_latent = 1, num_heads = 6, depth = 9, meta_dir = 'checkpoints/meta'):
+    def __init__(self, dim, hidden_size, enable_skip_connections = False, max_seq_len = 10, t_latent = 1, num_heads = 6, depth = 9, meta_dir = 'checkpoints/meta'):
         super().__init__()
-        #self.encoder = MovementEncoder(
-            #input_dim=dim - 4,
-            #latent_size=(t_latent, hidden_size),
-            #num_heads = num_heads,
-            #depth = depth,
-            #max_seq_len = max_seq_len
-        #)
-        #self.decoder = MovementDecoder(
-            #input_dim = hidden_size,
-            #out_dim = dim,
-            #hidden_size=hidden_size,
-            #num_heads = num_heads,
-            #depth = depth,
-            #max_seq_len = max_seq_len
-        #)
-        self.encoder = MovementSkipEncoder(
-            input_dim = dim - 4,
-            latent_size= (t_latent, hidden_size),
-            num_heads = num_heads,
-            depth = depth,
-            max_seq_len=max_seq_len
-        )
-        self.decoder = MovementSkipDecoder(
-            input_dim = hidden_size,
-            out_dim = dim,
-            hidden_size=hidden_size,
-            num_heads = num_heads,
-            depth = depth,
-            max_seq_len = max_seq_len
-        )
+        if not(enable_skip_connections):
+            self.encoder = MovementEncoder(
+                input_dim=dim - 4,
+                latent_size=(t_latent, hidden_size),
+                num_heads = num_heads,
+                depth = depth,
+                max_seq_len = max_seq_len
+            )
+            self.decoder = MovementDecoder(
+                input_dim = hidden_size,
+                out_dim = dim,
+                hidden_size=hidden_size,
+                num_heads = num_heads,
+                depth = depth,
+                max_seq_len = max_seq_len
+            )
+        else:
+            self.encoder = MovementSkipEncoder(
+                input_dim = dim - 4,
+                latent_size= (t_latent, hidden_size),
+                num_heads = num_heads,
+                depth = depth,
+                max_seq_len=max_seq_len
+            )
+            self.decoder = MovementSkipDecoder(
+                input_dim = hidden_size,
+                out_dim = dim,
+                hidden_size=hidden_size,
+                num_heads = num_heads,
+                depth = depth,
+                max_seq_len = max_seq_len
+            )
         self.latent_dim = (t_latent, hidden_size)
         self.fc_mu = nn.Linear(hidden_size, hidden_size)
         self.fc_logvar = nn.Linear(hidden_size, hidden_size)
@@ -337,7 +339,7 @@ class MotionVAE(nn.Module):
         return mu + eps * std
     
     def encode(self, x, key_padding_mask=None):
-        out = self.encoder(x, key_padding_mask=key_padding_mask)
+        out = self.encoder(x, context_mask=key_padding_mask)
         # extract with just first t_latent token to get global embedding
         dist = out[:, :self.latent_dim[0], :]
         mu = self.fc_mu(dist)
@@ -347,7 +349,7 @@ class MotionVAE(nn.Module):
         return latent, mu, logvar
 
     def decode(self, z_e, key_padding_mask=None):
-        return self.decoder(z_e, input_mask=key_padding_mask)
+        return self.decoder(z_e, context_mask=key_padding_mask)
 
     def forward(self, x, key_padding_mask=None, beta = 1e-4):
         B, T, D  = x.shape
@@ -364,10 +366,10 @@ class MotionVAE(nn.Module):
         key_padding_mask_4d = self._build_4d_padding_mask(key_padding_mask=aug_mask)
 
         # get latent and stats from encoder
-        z_e, mu, logvar = self.encode(x_seq[:, :, :-4], key_padding_mask=key_padding_mask_4d)
+        z_e, mu, logvar = self.encode(x_seq[:, :, :-4], key_padding_mask=aug_mask)
 
         # get reconstructed sample 
-        x_recon = self.decode(z_e, key_padding_mask=key_padding_mask_4d[:,:,1:, 1:])
+        x_recon = self.decode(z_e) # no mask when context is compressed
 
         # calculate losses
         kl_loss = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
@@ -393,7 +395,8 @@ class MotionVAE(nn.Module):
             x_recon_jts = self._get_joints_from_motion(x_recon)
             recon_joint_loss = F.smooth_l1_loss(x_recon_jts, x_jts)
 
-        loss = recon_feat_loss + recon_joint_loss + beta * kl_loss
+        #loss = recon_feat_loss + recon_joint_loss + beta * kl_loss
+        loss = recon_feat_loss + beta * kl_loss
 
         return {
             "x_recon": x_recon,
