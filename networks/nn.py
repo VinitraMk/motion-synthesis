@@ -364,9 +364,8 @@ class MotionVAE(nn.Module):
 
         # get a 4d additive mask for timm Attention
         key_padding_mask_4d = self._build_4d_padding_mask(key_padding_mask=aug_mask)
-
         # get latent and stats from encoder
-        z_e, mu, logvar = self.encode(x_seq[:, :, :-4], key_padding_mask=aug_mask)
+        z_e, mu, logvar = self.encode(x_seq[:, :, :-4], key_padding_mask=~aug_mask.to(torch.bool))
 
         # get reconstructed sample 
         x_recon = self.decode(z_e) # no mask when context is compressed

@@ -110,9 +110,9 @@ class TransformerBlock(nn.Module):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim, eps=1e-6)
         self.mh_attn = nn.MultiheadAttention(dim, num_heads=num_heads, dropout=dropout, batch_first=True)
-        self.dropout1 = nn.Dropout(0.1)
+        self.dropout1 = nn.Dropout(dropout)
         self.cross_attn = nn.MultiheadAttention(dim, num_heads=num_heads, dropout = dropout, batch_first = True)
-        self.dropout2 = nn.Dropout(0.1)
+        self.dropout2 = nn.Dropout(dropout)
         self.norm2 = nn.LayerNorm(dim, eps=1e-6)
         self.mlp = nn.Sequential(
             nn.Linear(dim, dim_ff),
@@ -121,7 +121,7 @@ class TransformerBlock(nn.Module):
             nn.Linear(dim_ff, dim),
         )
         self.norm3 = nn.LayerNorm(dim)
-        self.dropout3 = nn.Dropout(0.1)
+        self.dropout3 = nn.Dropout(dropout)
 
     def with_pos_encoding(self, x: torch.Tensor, pos: Optional[torch.Tensor]):
         return x if pos is None else x + pos
