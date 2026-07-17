@@ -248,7 +248,7 @@ class MotionVAE(nn.Module):
         super().__init__()
         if not(enable_skip_connections):
             self.encoder = MovementEncoder(
-                input_dim=dim - 4,
+                input_dim=dim,
                 latent_size=(t_latent, hidden_size),
                 num_heads = num_heads,
                 depth = depth,
@@ -264,7 +264,7 @@ class MotionVAE(nn.Module):
             )
         else:
             self.encoder = MovementSkipEncoder(
-                input_dim = dim - 4,
+                input_dim = dim,
                 latent_size= (t_latent, hidden_size),
                 num_heads = num_heads,
                 depth = depth,
@@ -335,8 +335,10 @@ class MotionVAE(nn.Module):
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
+        #eps = torch.randn_like(std)
+        #return mu + eps * std
+        dist = torch.distributions.Normal(mu, std)
+        return dist.rsample()
     
     def encode(self, x, key_padding_mask=None):
         out = self.encoder(x, context_mask=key_padding_mask)
@@ -365,7 +367,7 @@ class MotionVAE(nn.Module):
         # get a 4d additive mask for timm Attention
         key_padding_mask_4d = self._build_4d_padding_mask(key_padding_mask=aug_mask)
         # get latent and stats from encoder
-        z_e, mu, logvar = self.encode(x_seq[:, :, :-4], key_padding_mask=~aug_mask.to(torch.bool))
+        z_e, mu, logvar = self.encode(x_seq, key_padding_mask=~aug_mask.to(torch.bool))
 
         # get reconstructed sample 
         x_recon = self.decode(z_e) # no mask when context is compressed
@@ -383,13 +385,13 @@ class MotionVAE(nn.Module):
             #valid_frames_per_sample = key_padding_mask.sum(dim = -1).clamp(min = 1.0)
             #loss_per_sample = masked_error_per_frame.sum(dim = 1) / valid_frames_per_sample # sum over time dimension - Bx1
             #recon_loss = loss_per_sample.mean()
-            recon_feat_loss = self._get_feature_recon_loss(x_recon[:,:,:-4], x[:,:,:-4], key_padding_mask)
+            recon_feat_loss = self._get_feature_recon_loss(x_recon, x, key_padding_mask)
             x_jts = self._get_joints_from_motion(x)
             x_recon_jts = self._get_joints_from_motion(x_recon)
             recon_joint_loss = self._get_joint_recon_loss(x_recon_jts, x_jts, key_padding_mask)
             #print('input shape', x.shape, x_recon.shape, loss_mask.sum(), recon_l1.sum(), recon_loss)
         else:
-            recon_feat_loss = F.smooth_l1_loss(x_recon[:,:,:-4], x[:, :, :-4])
+            recon_feat_loss = F.smooth_l1_loss(x_recon, x)
             x_jts = self._get_joints_from_motion(x)
             x_recon_jts = self._get_joints_from_motion(x_recon)
             recon_joint_loss = F.smooth_l1_loss(x_recon_jts, x_jts)

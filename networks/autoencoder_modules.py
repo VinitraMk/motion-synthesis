@@ -244,10 +244,10 @@ class MovementDecoder(nn.Module):
 
         pos = np.arange(self.max_seq_len, dtype = np.float32)
         pos_embed = get_1d_sincos_pos_embed_from_grid(self.hidden_size, pos)
-        self.pos_embed.data.copy_(torch.from_numpy(pos_embed))
+        self.pos_embed.data.copy_(torch.from_numpy(pos_embed).unsqueeze(0))
         context_pos = np.arange(self.t_latent, dtype = np.float32)
         context_pos_embed = get_1d_sincos_pos_embed_from_grid(self.hidden_size, context_pos)
-        self.context_pos_embed.data.copy_(torch.from_numpy(context_pos_embed))
+        self.context_pos_embed.data.copy_(torch.from_numpy(context_pos_embed).unsqueeze(0))
 
 
     def forward(self, z, context_mask = None, attn_mask = None, is_autoregressive = True):
