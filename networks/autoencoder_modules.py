@@ -200,10 +200,10 @@ class MovementEncoder(nn.Module):
         #else:
             #B, _, _ = x.shape
         B, T = context_mask.shape
-        x = self.embedding(x)# + self.x_pos_embed
+        x = self.embedding(x) + self.x_pos_embed
         
         for block in self.transformer_blocks:
-            x = block(x, context_mask = context_mask, query_pos = self.x_pos_embed)
+            x = block(x, context_mask = context_mask)
             #if torch.isnan(x).any():
                 #print('NaN in x block')
         #print('block finite: ', torch.isfinite(x).all().item(), "max:", x.abs().max().item())
@@ -253,16 +253,16 @@ class MovementDecoder(nn.Module):
     def forward(self, z, context_mask = None, attn_mask = None, is_autoregressive = True):
         # x shape: (B, D)
         B = z.shape[0]
-        x = self.motion_seq.repeat(B, 1, 1)
+        x = self.motion_seq.repeat(B, 1, 1) + self.pos_embed
         #print('is latent in decoder nan', torch.isnan(latent).any())
         #print('ze max and latent max', x.abs().max().item(), latent.abs().max().item())
         #print('x shape after pos enc:', x.shape)
         #print('is x + m0 nan', torch.isnan(x).any())
         for block in self.transformer_blocks:
             if is_autoregressive:
-                x = block(x, context = z, context_mask = context_mask, attn_mask = attn_mask, query_pos = self.pos_embed, context_pos = self.context_pos_embed)
+                x = block(x, context = z, context_mask = context_mask, attn_mask = attn_mask)
             else:
-                x = block(x, context_mask = context_mask, attn_mask = attn_mask, query_pos = self.pos_embed)
+                x = block(x, attn_mask = attn_mask)
         x = self.out_proj(x)
         return x
     
