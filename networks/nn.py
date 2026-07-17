@@ -396,8 +396,8 @@ class MotionVAE(nn.Module):
             x_recon_jts = self._get_joints_from_motion(x_recon)
             recon_joint_loss = F.smooth_l1_loss(x_recon_jts, x_jts)
 
-        #loss = recon_feat_loss + recon_joint_loss + beta * kl_loss
-        loss = recon_feat_loss + beta * kl_loss
+        loss = recon_feat_loss + recon_joint_loss + beta * kl_loss
+        #loss = recon_feat_loss + beta * kl_loss
 
         return {
             "x_recon": x_recon,
