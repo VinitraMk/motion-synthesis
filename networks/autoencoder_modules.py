@@ -316,7 +316,7 @@ class MovementSkipEncoder(nn.Module):
         for block in self.input_blocks:
             x = block(x, context_mask = context_mask, attn_mask=attn_mask)
             x_outs.append(x)
-        x = self.middle_block(x, attn_mask=attn_mask)
+        x = self.middle_block(x, context_mask=context_mask, attn_mask=attn_mask)
         for (linear, block) in zip(self.linear_layers, self.output_blocks):
             x = torch.cat([x, x_outs.pop()], dim=-1)
             x = linear(x)
