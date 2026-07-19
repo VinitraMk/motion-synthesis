@@ -599,6 +599,7 @@ class MotionVAETrainer(object):
                 os.remove(pjoin(self.opt.model_dir, "tmp.tar")) # removing tar if latest stable is saved
 
             if best_val - val_loss > min_delta:
+                print('Saving the best state: ', val_loss, best_val)
                 best_val = val_loss
                 best_state = cpu_deepcopy_state(self.vae.state_dict())
                 epochs_without_improve = 0
