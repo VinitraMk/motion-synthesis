@@ -360,7 +360,7 @@ class MotionVAE(nn.Module):
         global_motion_tokens = torch.tile(self.global_motion_tokens, (B, 1, 1))
         x_seq = torch.cat([global_motion_tokens, x], dim=1)
         if key_padding_mask != None:
-            aug_mask = torch.cat([torch.ones(B, 1, device = key_padding_mask.device), key_padding_mask], dim = 1)
+            aug_mask = torch.cat([torch.ones(B, self.latent_dim[0], device = key_padding_mask.device), key_padding_mask], dim = 1)
         else:
             aug_mask = key_padding_mask
 
@@ -377,10 +377,16 @@ class MotionVAE(nn.Module):
         kl_loss = kl_loss.sum(dim=-1).mean()
 
         if key_padding_mask is not None:
-            recon_feat_loss = self._get_feature_recon_loss(x_recon, x, key_padding_mask)
-            x_jts = self._get_joints_from_motion(x)
-            x_recon_jts = self._get_joints_from_motion(x_recon)
-            recon_joint_loss = self._get_joint_recon_loss(x_recon_jts, x_jts, key_padding_mask)
+            #recon_feat_loss = self._get_feature_recon_loss(x_recon, x, key_padding_mask)
+            #x_jts = self._get_joints_from_motion(x)
+            #x_recon_jts = self._get_joints_from_motion(x_recon)
+            #recon_joint_loss = self._get_joint_recon_loss(x_recon_jts, x_jts, key_padding_mask)
+            x_recon_masked = x_recon * key_padding_mask.unsqueeze(-1)
+            x_masked = x * key_padding_mask.unsqueeze(-1)
+            recon_feat_loss = F.smooth_l1_loss(x_recon_masked, x_masked)
+            x_jts = self._get_joints_from_motion(x) * key_padding_mask.unsqueeze(-1).unsqueeze(-1)
+            x_recon_jts = self._get_joints_from_motion(x_recon) * key_padding_mask.unsqueeze(-1).unsqueeze(-1)
+            recon_joint_loss = F.smooth_l1_loss(x_recon_jts, x_jts)
         else:
             recon_feat_loss = F.smooth_l1_loss(x_recon, x)
             x_jts = self._get_joints_from_motion(x)
