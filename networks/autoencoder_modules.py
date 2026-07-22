@@ -201,6 +201,7 @@ class MovementEncoder(nn.Module):
         
         for block in self.transformer_blocks:
             x = block(x, key_padding_mask = key_padding_mask)
+        x = self.norm(x)
         return x
     
 class MovementDecoder(nn.Module):
@@ -256,6 +257,7 @@ class MovementDecoder(nn.Module):
                 x = block(x, attn_mask = attn_mask)
 
         x = self.out_proj(x)
+        x = self.norm(x)
         return x
     
 class MovementSkipEncoder(nn.Module):
@@ -292,7 +294,7 @@ class MovementSkipEncoder(nn.Module):
             nn.Linear(2 * D_latent, D_latent)
             for _ in range(num_blocks)
         ])
-        #self.norm = nn.LayerNorm(D_latent)
+        self.norm = nn.LayerNorm(D_latent)
         #self.fc_mu = nn.Linear(D_latent, D_latent)
         #self.fc_logvar = nn.Linear(D_latent, D_latent)
         self.initialize_weights()
@@ -323,7 +325,7 @@ class MovementSkipEncoder(nn.Module):
             x = torch.cat([x, x_outs.pop()], dim=-1)
             x = linear(x)
             x = block(x, key_padding_mask = key_padding_mask, attn_mask=attn_mask)
-
+        x = self.norm(x)
         return x
     
 class MovementSkipDecoder(nn.Module):
@@ -402,5 +404,6 @@ class MovementSkipDecoder(nn.Module):
                 x = block(x, attn_mask=attn_mask)
 
         x = self.out_proj(x)
+        x = self.norm(x)
         return x
     
