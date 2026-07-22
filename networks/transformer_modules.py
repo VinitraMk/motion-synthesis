@@ -122,20 +122,22 @@ class TransformerBlock(nn.Module):
         )
         self.norm3 = nn.LayerNorm(dim)
         self.dropout3 = nn.Dropout(dropout)
+        self.context_dim = context_dim or dim
+        self.query_dim = dim
 
     def with_pos_encoding(self, x: torch.Tensor, pos: Optional[torch.Tensor]):
         return x if pos is None else x + pos
 
-    def forward(self, x, context = None, context_mask = None, attn_mask = None, query_pos = None, context_pos = None):
+    def forward(self, x, context = None, key_padding_mask = None, attn_mask = None, query_pos = None, context_pos = None):
         q = k = self.with_pos_encoding(x, query_pos)
 
-        attn_out, _ = self.mh_attn(q, k, value = x, key_padding_mask = context_mask)
+        attn_out, _ = self.mh_attn(q, k, value = x, key_padding_mask = key_padding_mask)
         x = self.norm1(x + self.dropout1(attn_out))
 
         if context != None:
             q = self.with_pos_encoding(x, query_pos)
             k = self.with_pos_encoding(context, context_pos)
-            cross_out, _ = self.cross_attn(q, k, value = context, key_padding_mask = context_mask, attn_mask = attn_mask)
+            cross_out, _ = self.cross_attn(q, k, value = context, key_padding_mask = key_padding_mask, attn_mask = attn_mask)
             x = self.norm2(x + self.dropout2(cross_out))
 
         ff_out = self.mlp(x)
