@@ -193,14 +193,14 @@ class MovementEncoder(nn.Module):
         self.x_pos_embed.data.copy_(torch.from_numpy(pos_embed).unsqueeze(0))
 
     
-    def forward(self, x, context_mask=None):
+    def forward(self, x, key_padding_mask=None):
         # x shape: (B, T, D)
         
-        B, T = context_mask.shape
+        B, T = key_padding_mask.shape
         x = self.embedding(x) + self.x_pos_embed
         
         for block in self.transformer_blocks:
-            x = block(x, context_mask = context_mask)
+            x = block(x, key_padding_mask = key_padding_mask)
         return x
     
 class MovementDecoder(nn.Module):
@@ -244,16 +244,19 @@ class MovementDecoder(nn.Module):
         self.context_pos_embed.data.copy_(torch.from_numpy(context_pos_embed).unsqueeze(0))
 
 
-    def forward(self, z, context_mask = None, attn_mask = None, is_autoregressive = True):
+    def forward(self, z, key_padding_mask = None, attn_mask = None, is_autoregressive = True):
         # x shape: (B, D)
         B = z.shape[0]
         x = self.motion_seq.repeat(B, 1, 1) + self.pos_embed
+        z = z + self.context_pos_embed
         for block in self.transformer_blocks:
             if is_autoregressive:
-                x = block(x, context = z, context_mask = context_mask, attn_mask = attn_mask)
+                x = block(x, context = z, key_padding_mask = key_padding_mask, attn_mask = attn_mask)
             else:
                 x = block(x, attn_mask = attn_mask)
+
         x = self.out_proj(x)
+        x = self.norm(x)
         return x
     
 class MovementSkipEncoder(nn.Module):
@@ -290,7 +293,7 @@ class MovementSkipEncoder(nn.Module):
             nn.Linear(2 * D_latent, D_latent)
             for _ in range(num_blocks)
         ])
-        self.norm = nn.LayerNorm(D_latent)
+        #self.norm = nn.LayerNorm(D_latent)
         #self.fc_mu = nn.Linear(D_latent, D_latent)
         #self.fc_logvar = nn.Linear(D_latent, D_latent)
         self.initialize_weights()
@@ -308,19 +311,19 @@ class MovementSkipEncoder(nn.Module):
         self.x_pos_embed.data.copy_(torch.from_numpy(pos_embed).unsqueeze(0))
 
     
-    def forward(self, x, context_mask=None, attn_mask=None):
+    def forward(self, x, key_padding_mask=None, attn_mask=None):
         # x shape: (B, T, D)
-        B, T = context_mask.shape
+        B, T = key_padding_mask.shape
         x = self.embedding(x) + self.x_pos_embed
         x_outs = []
         for block in self.input_blocks:
-            x = block(x, context_mask = context_mask, attn_mask=attn_mask)
+            x = block(x, key_padding_mask = key_padding_mask, attn_mask=attn_mask)
             x_outs.append(x)
-        x = self.middle_block(x, context_mask=context_mask, attn_mask=attn_mask)
+        x = self.middle_block(x, key_padding_mask = key_padding_mask, attn_mask=attn_mask)
         for (linear, block) in zip(self.linear_layers, self.output_blocks):
             x = torch.cat([x, x_outs.pop()], dim=-1)
             x = linear(x)
-            x = block(x, context_mask = context_mask, attn_mask=attn_mask)
+            x = block(x, key_padding_mask = key_padding_mask, attn_mask=attn_mask)
 
         return x
     
@@ -373,7 +376,7 @@ class MovementSkipDecoder(nn.Module):
         self.pos_embed.data.copy_(torch.from_numpy(pos_embed))
 
 
-    def forward(self, z, context_mask=None, attn_mask = None, is_autoregressive = True):
+    def forward(self, z, key_padding_mask=None, attn_mask = None, is_autoregressive = True):
         # x shape: (B, D)
         B = z.shape[0]
         x = self.motion_seq.repeat(B, 1, 1) + self.pos_embed
@@ -381,13 +384,13 @@ class MovementSkipDecoder(nn.Module):
         x_outs = []
         for block in self.input_blocks:
             if is_autoregressive:
-                x = block(x, context=z, context_mask=context_mask, attn_mask = attn_mask)
+                x = block(x, context=z, key_padding_mask=key_padding_mask, attn_mask = attn_mask)
             else:
                 x = block(x, attn_mask=attn_mask)
             x_outs.append(x)
 
         if is_autoregressive:
-            x = self.middle_block(x, context=z, context_mask=context_mask, attn_mask = attn_mask)
+            x = self.middle_block(x, context=z, key_padding_mask=key_padding_mask, attn_mask = attn_mask)
         else:
             x = self.middle_block(x, attn_mask=attn_mask)
 
@@ -395,9 +398,11 @@ class MovementSkipDecoder(nn.Module):
             x = torch.cat([x, x_outs.pop()], dim=-1)
             x = linear(x)
             if is_autoregressive:
-                x = block(x, context=z, context_mask=context_mask, attn_mask=attn_mask)
+                x = block(x, context=z, key_padding_mask=key_padding_mask, attn_mask=attn_mask)
             else:
                 x = block(x, attn_mask=attn_mask)
+
         x = self.out_proj(x)
+        x = self.norm(x)
         return x
     
