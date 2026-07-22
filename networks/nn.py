@@ -341,7 +341,7 @@ class MotionVAE(nn.Module):
         return dist.rsample()
     
     def encode(self, x, key_padding_mask=None):
-        out = self.encoder(x, context_mask=key_padding_mask)
+        out = self.encoder(x, key_padding_mask=key_padding_mask)
         # extract with just first t_latent token to get global embedding
         dist = out[:, :self.latent_dim[0], :]
         mu = self.fc_mu(dist)
@@ -351,7 +351,7 @@ class MotionVAE(nn.Module):
         return latent, mu, logvar
 
     def decode(self, z_e, key_padding_mask=None):
-        return self.decoder(z_e, context_mask=key_padding_mask)
+        return self.decoder(z_e, key_padding_mask=key_padding_mask)
 
     def forward(self, x, key_padding_mask=None, beta = 1e-4):
         B, T, D  = x.shape
