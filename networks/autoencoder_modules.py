@@ -256,7 +256,6 @@ class MovementDecoder(nn.Module):
                 x = block(x, attn_mask = attn_mask)
 
         x = self.out_proj(x)
-        x = self.norm(x)
         return x
     
 class MovementSkipEncoder(nn.Module):
@@ -403,6 +402,5 @@ class MovementSkipDecoder(nn.Module):
                 x = block(x, attn_mask=attn_mask)
 
         x = self.out_proj(x)
-        x = self.norm(x)
         return x
     
