@@ -221,9 +221,9 @@ class MovementDecoder(nn.Module):
             TransformerBlock(hidden_size, num_heads, hidden_size * 4, context_dim=hidden_size)
             for _ in range(depth)
         ])
-        self.motion_seq = nn.Parameter(
-            torch.randn(1, max_seq_len, hidden_size)
-        )
+        #self.motion_seq = nn.Parameter(
+            #torch.randn(1, max_seq_len, hidden_size)
+        #)
         self.norm = nn.LayerNorm(out_dim)
         self.out_proj = nn.Linear(hidden_size, out_dim)
         self.initialize_weights()
@@ -246,8 +246,9 @@ class MovementDecoder(nn.Module):
 
     def forward(self, z, key_padding_mask = None, attn_mask = None, is_autoregressive = True):
         # x shape: (B, D)
-        B = z.shape[0]
-        x = self.motion_seq.repeat(B, 1, 1) + self.pos_embed
+        B, D = z
+        #x = self.motion_seq.repeat(B, 1, 1) + self.pos_embed
+        x = torch.zeros(B, self.max_seq_len, D, device = z.device)
         z = z + self.context_pos_embed
         for block in self.transformer_blocks:
             if is_autoregressive:
