@@ -336,8 +336,31 @@ class MotionVAETrainer(object):
         self.vae = vae
         self.device = args.device
 
+        weight_decay = 1e-3
+        param_groups = self._get_param_groups(model = self.vae, weight_decay=weight_decay) 
+        self.opt_vae = optim.AdamW(param_groups, lr=self.opt.lr, betas=(0.9, 0.999),
+            weight_decay=1e-3)
+
         if args.is_train:
             self.logger = Logger(args.log_dir)
+
+    def _get_param_groups(self, model: MotionVAE, weight_decay: float = 1e-4):
+        decay_params = []
+        no_decay_params = []
+
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            # 1D params are usually biases or norm weights -> no weight decay
+            if param.ndim == 1 or name.endswith(".bias"):
+                no_decay_params.append(param)
+            else:
+                decay_params.append(param)
+
+        return [
+            {"params": decay_params, "weight_decay": weight_decay},
+            {"params": no_decay_params, "weight_decay": 0.0},
+        ]
 
     @staticmethod
     def zero_grad(opt_list):
@@ -467,7 +490,6 @@ class MotionVAETrainer(object):
 
     def train(self, train_dataloader, val_dataloader, plot_eval = None):
         self.vae.to(self.device)
-        self.opt_vae = optim.Adam(self.vae.parameters(), lr=self.opt.lr)
         start_time = time.time()
         total_iters = self.opt.max_epoch * len(train_dataloader)
         self.scheduler_vae = CosineAnnealingLR(self.opt_vae, T_max = total_iters, eta_min = 1e-5)
