@@ -225,7 +225,7 @@ class MovementDecoder(nn.Module):
         self.motion_seq = nn.Parameter(
             torch.randn(1, max_seq_len, hidden_size)
         )
-        self.norm = nn.LayerNorm(hidden_size)
+        self.norm = nn.LayerNorm(out_dim)
         self.out_proj = nn.Linear(hidden_size, out_dim)
         self.initialize_weights()
 
@@ -360,7 +360,7 @@ class MovementSkipDecoder(nn.Module):
             nn.Linear(2 * D_latent, D_latent)
             for _ in range(num_blocks)
         ])
-        self.norm = nn.LayerNorm(hidden_size)
+        self.norm = nn.LayerNorm(out_dim)
         self.out_proj = nn.Linear(hidden_size, out_dim)
         self.initialize_weights()
 
