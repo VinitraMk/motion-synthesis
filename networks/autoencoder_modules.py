@@ -201,7 +201,6 @@ class MovementEncoder(nn.Module):
         
         for block in self.transformer_blocks:
             x = block(x, key_padding_mask = key_padding_mask)
-        x = self.norm(x)
         return x
     
 class MovementDecoder(nn.Module):
@@ -325,7 +324,6 @@ class MovementSkipEncoder(nn.Module):
             x = torch.cat([x, x_outs.pop()], dim=-1)
             x = linear(x)
             x = block(x, key_padding_mask = key_padding_mask, attn_mask=attn_mask)
-        x = self.norm(x)
         return x
     
 class MovementSkipDecoder(nn.Module):
