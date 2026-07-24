@@ -338,7 +338,7 @@ class MotionVAE(nn.Module):
         #eps = torch.randn_like(std)
         #return mu + eps * std
         dist = torch.distributions.Normal(mu, std)
-        return dist.rsample()
+        return dist.rsample(), dist
     
     def encode(self, x, key_padding_mask=None):
         out = self.encoder(x, key_padding_mask=key_padding_mask)
@@ -347,8 +347,13 @@ class MotionVAE(nn.Module):
         mu = self.fc_mu(dist)
         logvar = self.fc_logvar(dist)
 
-        latent = self.reparameterize(mu, logvar)
-        return latent, mu, logvar
+        latent, dist = self.reparameterize(mu, logvar)
+
+        gt_dist = torch.distributions.Normal(
+            loc=torch.zeros_like(mu), 
+            scale=torch.ones_like(logvar)
+        )
+        return latent, dist, gt_dist
 
     def decode(self, z_e, key_padding_mask=None):
         return self.decoder(z_e, key_padding_mask=key_padding_mask)
@@ -367,14 +372,17 @@ class MotionVAE(nn.Module):
         # get a 4d additive mask for timm Attention
         # key_padding_mask_4d = self._build_4d_padding_mask(key_padding_mask=aug_mask)
         # get latent and stats from encoder
-        z_e, mu, logvar = self.encode(x_seq, key_padding_mask=~aug_mask.to(torch.bool))
+        z_e, dist, gt_dist = self.encode(x_seq, key_padding_mask=~aug_mask.to(torch.bool))
 
         # get reconstructed sample 
         x_recon = self.decode(z_e) # no mask when context is compressed
 
         # calculate losses
-        kl_loss = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
-        kl_loss = kl_loss.sum(dim=-1).mean()
+        #kl_loss = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
+        #kl_loss = kl_loss.sum(dim=-1).mean()
+        div = torch.distributions.kl_divergence(dist, gt_dist)
+        kl_loss = div.mean()
+        
 
         if key_padding_mask is not None:
             #recon_feat_loss = self._get_feature_recon_loss(x_recon, x, key_padding_mask)
@@ -403,7 +411,5 @@ class MotionVAE(nn.Module):
             "kl_loss": kl_loss,
             "recon_loss": recon_feat_loss + recon_joint_loss,
             "recon_feat_loss": recon_feat_loss,
-            "recon_joint_loss": recon_joint_loss,
-            "mu": mu,
-            "logvar": logvar
+            "recon_joint_loss": recon_joint_loss
         }
