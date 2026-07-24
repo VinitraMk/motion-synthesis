@@ -196,7 +196,6 @@ class MovementEncoder(nn.Module):
     def forward(self, x, key_padding_mask=None):
         # x shape: (B, T, D)
         
-        B, T = key_padding_mask.shape
         x = self.embedding(x) + self.x_pos_embed
         
         for block in self.transformer_blocks:
@@ -246,7 +245,7 @@ class MovementDecoder(nn.Module):
 
     def forward(self, z, key_padding_mask = None, attn_mask = None, is_autoregressive = True):
         # x shape: (B, D)
-        B, _, D = z
+        B, _, D = z.shape
         #x = self.motion_seq.repeat(B, 1, 1) + self.pos_embed
         x = torch.zeros(B, self.max_seq_len, D, device = z.device)
         z = z + self.context_pos_embed
