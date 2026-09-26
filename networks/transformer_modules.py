@@ -222,28 +222,24 @@ class DiTBlock(nn.Module):
     """
     A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
     """
-    def __init__(self, hidden_size, num_heads, mlp_ratio = 4.0, context_dim = None):
+    def __init__(self, hidden_size, num_heads, mlp_ratio = 4.0, context_dim = None, dropout = 0.1):
         super().__init__()
         context_dim = context_dim or hidden_size
-        self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        #self.attn = CrossAttention(hidden_size, num_heads=num_heads, context_dim=context_dim, dropout=0.1)
-        self.self_attn = Attention(hidden_size, num_heads = num_heads, qkv_bias = True, attn_drop = 0.1, proj_drop = 0.1)
-        #self.attn_drop = nn.Dropout(0.1)
+        self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6) # set false to let modulate learn scale, shift and gate features
+        self.self_attn = nn.MultiheadAttention(hidden_size, num_heads=num_heads, dropout=dropout, batch_first=True)
+        self.self_attn_drop = nn.Dropout(dropout)
         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.cross_attn = CrossAttention(hidden_size, num_heads=num_heads, context_dim=context_dim, dropout=0.1)
+        self.cross_attn = nn.MultiheadAttention(hidden_size, num_heads=num_heads, dropout=dropout, batch_first=True)
         self.norm3 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.cross_attn_drop = nn.Dropout(dropout)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
-        #approx_gelu = lambda: nn.GELU(approximate="tanh")
-        #self.mlp = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0.1)
-        #self.adaLN_modulation = nn.Sequential(
-            #nn.SiLU(),
-            #nn.Linear(hidden_size, 6 * hidden_size, bias=True)
-        #)
         self.mlp = nn.Sequential(
             nn.Linear(hidden_size, mlp_hidden_dim, bias=True),
             nn.GELU(),
+            nn.Dropout(dropout),
             nn.Linear(mlp_hidden_dim, hidden_size, bias=True)
         )
+        self.dropout3 = nn.Dropout(dropout)
         self.cond_proj = nn.Linear(context_dim, 9 * hidden_size, bias=True)
         
         self.last_cross_out = None
@@ -251,19 +247,31 @@ class DiTBlock(nn.Module):
     def modulate(self, x, shift, scale):
         return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
-    def forward(self, x, c, text_ctx, text_mask = None):
-        shift_msa, scale_msa, gate_msa, shift_ca, scale_ca, gate_ca, shift_mlp, scale_mlp, gate_mlp = self.cond_proj(c).chunk(9, dim=1)
+    def with_pos_encoding(self, x: torch.Tensor, pos: Optional[torch.Tensor]):
+        return x if pos is None else x + pos
+
+    def forward(self, x, global_condition, unpooled_text_embeddings, text_attn_mask = None):
+        shift_msa, scale_msa, gate_msa, shift_ca, scale_ca, gate_ca, shift_mlp, scale_mlp, gate_mlp = self.cond_proj(global_condition).chunk(9, dim=1)
         h = self.modulate(self.norm1(x), shift_msa, scale_msa)
-        x = x + gate_msa.unsqueeze(1) * self.self_attn(h)
+        self_attn_out, _ = self.self_attn(h, h, value = h)
+        x = x + gate_msa.unsqueeze(1) * self_attn_out
 
-        h_cross = self.modulate(self.norm2(x), shift_ca, scale_ca)
-        cross_out = self.cross_attn(h_cross, text_ctx, mask = text_mask)
-        x = x + gate_ca.unsqueeze(1) * cross_out
-        self.last_cross_out = cross_out
+        if unpooled_text_embeddings != None:
+            h_cross = self.modulate(self.norm2(x), shift_ca, scale_ca)
+            #k = unpooled_text_embeddings * text_attn_mask
+            #v = unpooled_text_embeddings + global_condition
+            text_key_padding_mask = (
+                ~text_attn_mask.bool()
+                if text_attn_mask is not None
+                else None
+            )
+            cross_out, _ = self.cross_attn(h_cross, unpooled_text_embeddings, value = unpooled_text_embeddings, key_padding_mask = text_key_padding_mask)
+            x = x + gate_ca.unsqueeze(1) * cross_out
+            self.last_cross_out = cross_out
 
-        #x = x + self.mlp(self.norm3(x))
         h = self.modulate(self.norm3(x), shift_mlp, scale_mlp)
-        x = x + gate_mlp.unsqueeze(1) * self.mlp(h)
+        mlp_out = self.mlp(h)
+        x = x + gate_mlp.unsqueeze(1) * mlp_out
 
         return x
 

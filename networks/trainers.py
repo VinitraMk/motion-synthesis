@@ -1277,9 +1277,10 @@ class MotionDiTTrainer(object):
 
     def _init_vae(self, autoencoder_type: str):
         if autoencoder_type == "pretrained_vae":
-            self.encoder, self.decoder = get_pretrained_vae(self.opt.model_dir)
+            self.encoder, self.decoder, self.vae = get_pretrained_vae(self.opt.model_dir, self.opt.meta_dir, self.opt.max_motion_length)
             self.encoder.to(self.device)
             self.decoder.to(self.device)
+            self.vae.to(self.device)
         else:
             raise ValueError(f"Unknown vae_name: {autoencoder_type}")
         
@@ -1407,7 +1408,9 @@ class MotionDiTTrainer(object):
         motion_masks_enc = motion_masks_enc.unsqueeze(-1)
 
         with torch.no_grad():
-            self.latents = self.encoder(motions[:, :, :-4])
+            #self.latents = self.encoder(motions[:, :, :-4])
+            self.latents, _, _ = self.vae.encode(motions, motion_masks)
+            #print('latents shape: ', self.latents.shape, motion_masks.shape)
             self.text_unpooled_embeddings, self.text_pooled_embeddings, self.text_mask = self.text_encoder.encode_tokens(texts)
             #print('text embeddings: ', self.text_pooled_embeddings.shape, self.text_unpooled_embeddings.shape, self.text_mask.shape)
 
@@ -1438,17 +1441,17 @@ class MotionDiTTrainer(object):
             d,
             self.text_pooled_embeddings,
             self.text_unpooled_embeddings,
-            text_mask = self.text_mask
+            unpooled_cliptext_mask = self.text_mask
         )
         # Check output of DiT and loss
         if torch.isnan(self.pred).any():
             print("NaN in pred")
-        
-        masked_pred = self.pred * motion_masks_enc
-        masked_target = self.target * motion_masks_enc
+        #masked_pred = decoded_motion * motion_masks.unsqueeze(-1)
 
         x0_pred = self.predict_x0_from_eps(x_t, self.pred, self.sqrt_alphas_cumprod, self.sqrt_one_minus_alphas_cumprod, t)
-        motion_pred = self.decoder(x0_pred)
+        #motion_pred = self.decoder(x0_pred)
+        motion_pred = self.vae.decode(x0_pred)
+        motion_target = self.vae.decode(self.target)
         gt_motions = self.denormalize_motion(motions.detach().cpu())
         pred_motions = self.denormalize_motion(motion_pred.detach().cpu())
         gt_motions_jts = recover_from_ric(gt_motions.float(), self.joints_num)
@@ -1460,15 +1463,19 @@ class MotionDiTTrainer(object):
         _, _, self.root_vel_loss = self._compute_foot_contact_loss(pred_motions_jts, gt_motions_jts)
         
 
-        pad_mask = 1.0 - motion_masks_enc
-        pad_pred = self.pred * pad_mask
+        #pad_mask = 1.0 - motion_masks_enc
+        pad_mask = 1.0 - motion_masks
+        pad_pred = motion_pred * pad_mask.unsqueeze(-1)
+        
+
         self.pad_loss = (pad_pred ** 2).mean()
-        lambda_pad = 0.1
+        lambda_pad = 0.0 # 0.1
 
         # mse_loss
-        self.mse_loss = F.mse_loss(masked_pred, masked_target)
+        #self.mse_loss = F.mse_loss(pad_pred, masked_target)
+        self.mse_loss = F.mse_loss(self.pred, self.target)
 
-        self.loss = self.mse_loss + (lambda_pad * self.pad_loss) + (lambda_vel * self.root_vel_loss)
+        self.loss = self.mse_loss + (lambda_vel * self.root_vel_loss) + (lambda_pad * self.pad_loss) 
 
 
     def update(self):

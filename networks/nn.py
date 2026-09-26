@@ -148,8 +148,8 @@ class DiT(nn.Module):
         )
 
         # condition projection layers
-        self.text_pooled_proj = nn.Linear(input_size, hidden_size, bias = True)
-        self.text_unpooled_proj = nn.Linear(input_size, hidden_size, bias = True)
+        self.text_pooled_proj = nn.Linear(text_dim, hidden_size, bias = True)
+        self.text_unpooled_proj = nn.Linear(text_dim, hidden_size, bias = True)
         self.cond_fuse = nn.Sequential(
             nn.Linear(hidden_size * 3, hidden_size),
             nn.SiLU(),
@@ -215,7 +215,7 @@ class DiT(nn.Module):
     def encode_text_to_motion_space(self, text_embeddings):
         return self.text_proj(text_embeddings)
 
-    def forward(self, x, t, d, text_pooled_embeddings, text_unpooled_embeddings, text_mask = None):
+    def forward(self, x, t, d, text_pooled_embeddings, text_unpooled_embeddings, unpooled_cliptext_mask = None):
         """
         Forward pass of DiT.
         x: (N, T, C_latent) tensor of temporal inputs (latent representations of motion)
@@ -226,20 +226,16 @@ class DiT(nn.Module):
         text_mask: (N, L_text) tensor of text masks
         """
         #print('x shapes: ', x.size(), self.x_embedder(x).size(), self.pos_embed.size())
-        x = self.x_embedder(x) + self.pos_embed  # (N, T, C_latent),
+        x = self.x_embedder(x) #+ self.pos_embed  # (N, T, C_latent),
         t = self.t_embedder(t)                   # (N, C_latent)
         d = self.d_embedder(d)                   # (N, C_latent)
 
-        #text_ctx = self.text_proj(text_embeddings)
-        #text_global_ctx = text_pooled_embeddings * self.text_cond_scale
-        
-        #c = t + d + text_pooled_embeddings       # (N, C_latent)
         text_pool_embed = self.text_pooled_proj(text_pooled_embeddings)
         text_unpooled_embed = self.text_unpooled_proj(text_unpooled_embeddings)
         c = torch.cat([t, d, text_pool_embed], dim=-1)
         global_cond_fused = self.cond_fuse(c)
         for block in self.blocks:
-            x = block(x, global_cond_fused, text_unpooled_embed, text_mask) # (N, T, C_latent)
+            x = block(x, global_cond_fused, text_unpooled_embed, unpooled_cliptext_mask) # (N, T, C_latent)
         x = self.final_layer(x, global_cond_fused)               # (N, T, D_latent)
         return x
 
@@ -287,6 +283,8 @@ class MotionVAE(nn.Module):
         )
         self.mean = torch.tensor(np.load(pjoin(meta_dir, 'mean.npy')))
         self.std = torch.tensor(np.load(pjoin(meta_dir, 'std.npy')))
+        self.max_seq_len = max_seq_len
+        self.t_latent = t_latent
 
     def _build_4d_padding_mask(self, key_padding_mask = None):
         # key_padding_mask shape: (B, T) boolean mask
@@ -341,7 +339,18 @@ class MotionVAE(nn.Module):
         return dist.rsample(), dist
     
     def encode(self, x, key_padding_mask=None):
-        out = self.encoder(x, key_padding_mask=key_padding_mask)
+        B, _, _ = x.size()
+        if x.shape[1] != (self.max_seq_len + self.t_latent):
+            global_tokens = self.global_motion_tokens.expand(B, -1, -1)
+            x = torch.cat(
+                [global_tokens, x],
+                dim = 1
+            )
+
+        if key_padding_mask != None:
+            aug_mask = torch.cat([torch.ones(B, self.latent_dim[0], device = key_padding_mask.device), key_padding_mask], dim = 1)
+
+        out = self.encoder(x, key_padding_mask=aug_mask)
         # extract with just first t_latent token to get global embedding
         dist = out[:, :self.latent_dim[0], :]
         mu = self.fc_mu(dist)

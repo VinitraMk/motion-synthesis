@@ -314,6 +314,7 @@ class MovementSkipEncoder(nn.Module):
     def forward(self, x, key_padding_mask=None, attn_mask=None):
         # x shape: (B, T, D)
         B, T = key_padding_mask.shape
+        #print('x input shape in encoder: ',x.shape, self.x_pos_embed.shape)
         x = self.embedding(x) + self.x_pos_embed
         x_outs = []
         for block in self.input_blocks:
