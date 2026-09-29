@@ -1447,11 +1447,13 @@ class MotionDiTTrainer(object):
         if torch.isnan(self.pred).any():
             print("NaN in pred")
         #masked_pred = decoded_motion * motion_masks.unsqueeze(-1)
-
-        x0_pred = self.predict_x0_from_eps(x_t, self.pred, self.sqrt_alphas_cumprod, self.sqrt_one_minus_alphas_cumprod, t)
+        if self.prediction_type == "epsilon":
+            x0_pred = self.predict_x0_from_eps(x_t, self.pred, self.sqrt_alphas_cumprod, self.sqrt_one_minus_alphas_cumprod, t)
+        else:
+            x0_pred = self.pred
         #motion_pred = self.decoder(x0_pred)
         motion_pred = self.vae.decode(x0_pred)
-        motion_target = self.vae.decode(self.target)
+        
         gt_motions = self.denormalize_motion(motions.detach().cpu())
         pred_motions = self.denormalize_motion(motion_pred.detach().cpu())
         gt_motions_jts = recover_from_ric(gt_motions.float(), self.joints_num)
@@ -1475,7 +1477,7 @@ class MotionDiTTrainer(object):
         #self.mse_loss = F.mse_loss(pad_pred, masked_target)
         self.mse_loss = F.mse_loss(self.pred, self.target)
 
-        self.loss = self.mse_loss + (lambda_vel * self.root_vel_loss) + (lambda_pad * self.pad_loss) 
+        self.loss = self.mse_loss + (lambda_vel * self.root_vel_loss) #+ (lambda_pad * self.pad_loss) 
 
 
     def update(self):
